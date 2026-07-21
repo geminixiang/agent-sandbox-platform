@@ -1,0 +1,22 @@
+{
+  "name": "@geminixiang/sandbox-contracts",
+  "version": "0.1.0",
+  "description": "Versioned HTTP contracts for Agent Sandbox Platform",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

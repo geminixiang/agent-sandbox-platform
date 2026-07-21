@@ -1,0 +1,19 @@
+{
+  "name": "agent-sandbox-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tests"
+  ],
+  "scripts": {
+    "start": "npm run start --workspace=@geminixiang/sandbox-control-plane",
+    "test": "npm test --workspaces --if-present",
+    "test:package": "node scripts/check-sdk-package.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
