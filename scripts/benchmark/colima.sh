@@ -11,6 +11,7 @@ observer_port="${SANDBOX_BENCHMARK_OBSERVER_PORT:-18792}"
 samples="${SANDBOX_BENCHMARK_SAMPLES:-10}"
 warmups="${SANDBOX_BENCHMARK_WARMUPS:-2}"
 concurrency_samples="${SANDBOX_BENCHMARK_CONCURRENCY_SAMPLES:-3}"
+stream_samples="${SANDBOX_BENCHMARK_STREAM_SAMPLES:-3}"
 output_dir="${SANDBOX_BENCHMARK_OUTPUT_DIR:-${ROOT}/.sandbox-platform/benchmarks}"
 tmp="$(mktemp -d)"
 control_pid=""
@@ -107,6 +108,7 @@ SANDBOX_BENCHMARK_MARKDOWN="${markdown_output}" \
 SANDBOX_BENCHMARK_SAMPLES="${samples}" \
 SANDBOX_BENCHMARK_WARMUPS="${warmups}" \
 SANDBOX_BENCHMARK_CONCURRENCY_SAMPLES="${concurrency_samples}" \
+SANDBOX_BENCHMARK_STREAM_SAMPLES="${stream_samples}" \
   "${tmp}/venv/bin/python" -m tests.benchmark.colima_baseline
 
 printf 'Raw benchmark: %s\nMarkdown report: %s\n' "${json_output}" "${markdown_output}"

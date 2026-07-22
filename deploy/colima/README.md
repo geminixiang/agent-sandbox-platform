@@ -81,6 +81,18 @@ Build the Python SDK wheel, install it into a clean virtual environment, and dri
 
 This verifies the release artifact—not the source checkout—can create a browser Sandbox, write a Playwright module, navigate to a public page, read a screenshot as bytes, and release the Lease.
 
+## Python wheel streaming test
+
+With the existing Colima profile running, build both current runtime images and exercise the binary streaming contract through a clean-installed Python wheel:
+
+```bash
+./scripts/local/python-streaming-smoke.sh
+```
+
+The script does not create, stop, or delete a Colima profile. It applies the coding and browser Pools, starts a temporary Go control plane with a one-transfer-per-Lease limit, uses dynamically generated five-minute Subject tokens, and covers 32 MiB round trips, atomic replacement, integrity rejection, early-close permit release, release-time aborts, tenant scoping, and symlink rejection. Cleanup is limited to its process, temporary files, and Claims carrying its hashed consumer identity.
+
+Secret-free evidence containing the immutable git commit, Kubernetes image IDs, WarmPool readiness, and before/after Claim sets is verified and written under `.sandbox-platform/test-reports/`. The test intentionally omits a raw-TCP short-`Content-Length` probe: framing behavior varies by HTTP client/server connection handling, while the deterministic mismatch contract is covered by control-plane tests. The installed SDK is used for all other transfers; direct `httpx` is limited to the malformed digest contract case.
+
 ## Pi extension environment
 
 Start the complete environment used by the project-local pi extension:

@@ -7,17 +7,85 @@ import hmac
 import json
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
-from agent_sandbox import Sandbox, SandboxClient
+from agent_sandbox import FileDownload, Sandbox, SandboxClient
 
 from .core import Sample, Series, SeriesSpec, build_report, build_series, measure_series, render_markdown
 
 AcquireOperation = Callable[[str], Awaitable[Sandbox]]
 ReadyOperation = Callable[[str], Awaitable[None]]
 ReleaseOperation = Callable[[Sandbox], Awaitable[object]]
+STREAM_CHUNK_BYTES = 64 * 1024
+STREAM_SIZES = (1 * 1024 * 1024, 10 * 1024 * 1024, 32 * 1024 * 1024)
+_PAYLOAD_BLOCK = hashlib.sha256(b"agent-sandbox-benchmark").digest()
+
+
+class Digest(Protocol):
+    def update(self, value: bytes, /) -> None: ...
+    def hexdigest(self) -> str: ...
+
+
+@dataclass(slots=True)
+class Integrity:
+    count: int = 0
+    digest: Digest = field(default_factory=hashlib.sha256)
+
+    def update(self, chunk: bytes) -> None:
+        self.count += len(chunk)
+        self.digest.update(chunk)
+
+    def hexdigest(self) -> str:
+        return self.digest.hexdigest()
+
+
+async def stream_chunks(size: int, integrity: Integrity) -> AsyncGenerator[bytes, None]:
+    remaining = size
+    while remaining:
+        length = min(STREAM_CHUNK_BYTES, remaining)
+        chunk = (_PAYLOAD_BLOCK * ((length + len(_PAYLOAD_BLOCK) - 1) // len(_PAYLOAD_BLOCK)))[:length]
+        integrity.update(chunk)
+        yield chunk
+        remaining -= length
+
+
+def stream_digest(size: int) -> str:
+    integrity = Integrity()
+    remaining = size
+    while remaining:
+        length = min(STREAM_CHUNK_BYTES, remaining)
+        integrity.update((_PAYLOAD_BLOCK * ((length + len(_PAYLOAD_BLOCK) - 1) // len(_PAYLOAD_BLOCK)))[:length])
+        remaining -= length
+    return integrity.hexdigest()
+
+
+def stream_specs(samples: int) -> tuple[SeriesSpec, ...]:
+    return tuple(
+        SeriesSpec(f"stream-{operation}-{size // (1024 * 1024)}MiB", "coding", "warm", samples, 1)
+        for size in STREAM_SIZES
+        for operation in ("write", "read")
+    )
+
+
+def verify_integrity(integrity: Integrity, size: int, digest: str) -> None:
+    if integrity.count != size or integrity.hexdigest() != digest:
+        raise ValueError("streamed content failed benchmark integrity verification")
+
+
+async def consume_download(download: FileDownload, size: int, digest: str) -> None:
+    integrity = Integrity()
+    pending = bytearray()
+    async for received in download:
+        pending.extend(received)
+        while len(pending) >= STREAM_CHUNK_BYTES:
+            integrity.update(bytes(pending[:STREAM_CHUNK_BYTES]))
+            del pending[:STREAM_CHUNK_BYTES]
+    if pending:
+        integrity.update(bytes(pending))
+    verify_integrity(integrity, size, digest)
 
 
 async def measure_acquire_series(
@@ -50,12 +118,21 @@ async def measure_acquire_series(
 
 
 class Benchmark:
-    def __init__(self, client: SandboxClient, observer_url: str, samples: int, warmups: int, concurrency_samples: int) -> None:
+    def __init__(
+        self,
+        client: SandboxClient,
+        observer_url: str,
+        samples: int,
+        warmups: int,
+        concurrency_samples: int,
+        stream_samples: int = 3,
+    ) -> None:
         self.client = client
         self.observer_url = observer_url.rstrip("/")
         self.samples = samples
         self.warmups = warmups
         self.concurrency_samples = concurrency_samples
+        self.stream_samples = stream_samples
 
     async def run(self) -> list[Series]:
         series: list[Series] = []
@@ -65,6 +142,7 @@ class Benchmark:
             for concurrency in (1, 2, 4):
                 series.append(await self._concurrent_acquire(pool, concurrency))
         series.extend(await self._coding_operations())
+        series.extend(await self._streaming_operations())
         series.extend(await self._browser_operations())
         return series
 
@@ -160,6 +238,57 @@ class Benchmark:
 
         return await measure_series(spec, operation)
 
+    async def _streaming_operations(self) -> list[Series]:
+        sandbox = await self.client.create(pool="coding")
+        results: list[Series] = []
+        specifications = stream_specs(self.stream_samples)
+        try:
+            for index, size in enumerate(STREAM_SIZES):
+                write_spec = specifications[index * 2]
+                read_spec = specifications[index * 2 + 1]
+                size_mib = size // (1024 * 1024)
+                digest = stream_digest(size)
+                path = f"/workspace/benchmark-stream-{size_mib}MiB.bin"
+
+                async def write() -> None:
+                    integrity = Integrity()
+                    await sandbox.files.write_stream(
+                        path,
+                        stream_chunks(size, integrity),
+                        size_bytes=size,
+                        sha256=digest,
+                    )
+                    verify_integrity(integrity, size, digest)
+
+                results.append(
+                    await measure_series(write_spec, write)
+                )
+
+                # Prepare a known fixture outside the read timing, even though the
+                # preceding write series leaves the same deterministic content.
+                fixture_integrity = Integrity()
+                await sandbox.files.write_stream(
+                    path,
+                    stream_chunks(size, fixture_integrity),
+                    size_bytes=size,
+                    sha256=digest,
+                )
+                verify_integrity(fixture_integrity, size, digest)
+
+                async def read() -> None:
+                    async with sandbox.files.read_stream(path) as download:
+                        if (download.size_bytes, download.sha256) != (size, digest):
+                            raise ValueError("download metadata failed benchmark integrity verification")
+                        await consume_download(download, size, digest)
+
+                results.append(
+                    await measure_series(read_spec, read)
+                )
+            return results
+        finally:
+            await sandbox.release()
+            await self._wait_ready("coding")
+
     async def _browser_operations(self) -> list[Series]:
         sandbox = await self.client.create(pool="browser")
         source = '''import { chromium } from "playwright-core";
@@ -234,12 +363,28 @@ async def main() -> None:
     samples = int(os.environ.get("SANDBOX_BENCHMARK_SAMPLES", "10"))
     warmups = int(os.environ.get("SANDBOX_BENCHMARK_WARMUPS", "2"))
     concurrency_samples = int(os.environ.get("SANDBOX_BENCHMARK_CONCURRENCY_SAMPLES", "3"))
+    stream_samples = int(os.environ.get("SANDBOX_BENCHMARK_STREAM_SAMPLES", "3"))
+    metadata["streaming"] = {
+        "chunkBytes": STREAM_CHUNK_BYTES,
+        "sizesMiB": [size // (1024 * 1024) for size in STREAM_SIZES],
+        "samples": stream_samples,
+        "warmups": 1,
+        "fixturePreparationTimed": False,
+        "integrity": "incremental-sha256-and-byte-count",
+    }
     async with SandboxClient(
         base_url=_required("SANDBOX_PLATFORM_URL"),
         credentials=_subject_token,
         timeout=180,
     ) as client:
-        benchmark = Benchmark(client, _required("SANDBOX_BENCHMARK_OBSERVER_URL"), samples, warmups, concurrency_samples)
+        benchmark = Benchmark(
+            client,
+            _required("SANDBOX_BENCHMARK_OBSERVER_URL"),
+            samples,
+            warmups,
+            concurrency_samples,
+            stream_samples,
+        )
         report = build_report(metadata, await benchmark.run())
     output_json.write_text(json.dumps(report.to_dict(), indent=2) + "\n")
     output_markdown.write_text(render_markdown(report))
@@ -284,8 +429,7 @@ def _number(value: dict[object, object], key: str) -> float:
 
 
 def _payload(size: int) -> bytes:
-    block = hashlib.sha256(b"agent-sandbox-benchmark").digest()
-    return (block * ((size + len(block) - 1) // len(block)))[:size]
+    return (_PAYLOAD_BLOCK * ((size + len(_PAYLOAD_BLOCK) - 1) // len(_PAYLOAD_BLOCK)))[:size]
 
 
 def _successful(started: int, *, clock_ns: Callable[[], int] = time.perf_counter_ns) -> Sample:
