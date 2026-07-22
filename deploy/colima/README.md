@@ -57,6 +57,16 @@ The smoke test builds and starts the production Go control plane, drives it thro
 - control-plane restart recovery,
 - release and Claim cleanup.
 
+## Browser gVisor test
+
+Build the pinned Chromium/Playwright image inside Colima and run a real browser under gVisor:
+
+```bash
+./scripts/local/browser-smoke.sh
+```
+
+This test claims a browser Sandbox from its WarmPool, verifies the backing Pod uses `RuntimeClass: gvisor`, launches Chromium as a non-root user with its own sandbox enabled, clicks an element through Playwright, and saves a screenshot to the persistent workspace.
+
 ## Cleanup
 
 Remove Platform and Agent Sandbox cluster resources but retain the Colima VM:
