@@ -23,6 +23,9 @@ jobs:
           - image: agent-sandbox-browser
             dockerfile: images/browser/Dockerfile
             context: images/browser
+          - image: agent-sandbox-coding
+            dockerfile: images/coding/Dockerfile
+            context: images/coding
           - image: agent-sandbox-control-plane
             dockerfile: images/control-plane/Dockerfile
             context: .
