@@ -1,6 +1,6 @@
 # Browser runtime image
 
-Pinned Chromium and `playwright-core` runtime for the browser Golden Path. The image runs as a non-root user and keeps Chromium's own sandbox enabled; it does not pass `--no-sandbox`.
+Pinned Chromium and `playwright-core` runtime for the browser Golden Path. The image runs as a non-root user, keeps Chromium's own sandbox enabled, and includes `/usr/local/bin/agent-sandbox-transfer` for production bounded streaming. It does not pass `--no-sandbox`.
 
 Build and load it into the dedicated Colima profile:
 

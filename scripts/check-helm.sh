@@ -21,6 +21,14 @@ grep -q 'runAsNonRoot: true' "${rendered}"
 grep -q 'kind: NetworkPolicy' "${rendered}"
 grep -q 'kind: SandboxWarmPool' "${rendered}"
 grep -q 'automountServiceAccountToken: false' "${rendered}"
+grep -q 'name: SANDBOX_FILE_TRANSFER_MAX_CONCURRENT' "${rendered}"
+grep -q 'name: SANDBOX_FILE_TRANSFER_MAX_PER_LEASE' "${rendered}"
+grep -q 'name: SANDBOX_FILE_TRANSFER_TIMEOUT' "${rendered}"
+
+if helm template platform "${chart}" --namespace agent-sandbox-platform --set preflight.enabled=false --set controlPlane.fileTransfer.maxConcurrent=0 >/dev/null 2>&1; then
+  echo "ERROR: chart accepted a zero file transfer limit" >&2
+  exit 1
+fi
 
 gke_rendered="$(mktemp)"
 trap 'rm -f "${rendered}" "${gke_rendered}"' EXIT

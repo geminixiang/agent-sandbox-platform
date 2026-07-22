@@ -41,17 +41,20 @@ type Pool struct {
 }
 
 type Options struct {
-	Namespace         string
-	MetadataSecret    string
-	Pools             map[string]Pool
-	DefaultTTLSeconds int
-	MaxTTLSeconds     int
-	ReadyTimeout      time.Duration
-	PollInterval      time.Duration
-	Now               func() time.Time
-	Resources         resourceClient
-	Pods              podClient
-	Runner            commandRunner
+	Namespace            string
+	MetadataSecret       string
+	Pools                map[string]Pool
+	DefaultTTLSeconds    int
+	MaxTTLSeconds        int
+	ReadyTimeout         time.Duration
+	PollInterval         time.Duration
+	Now                  func() time.Time
+	Resources            resourceClient
+	Pods                 podClient
+	Runner               commandRunner
+	MaxTransfers         int
+	MaxTransfersPerLease int
+	TransferTimeout      time.Duration
 }
 
 type Backend struct {
@@ -64,6 +67,7 @@ type Backend struct {
 	resources                  resourceClient
 	pods                       podClient
 	runner                     commandRunner
+	transfers                  *transferManager
 	acquireMu                  sync.Mutex
 }
 
@@ -94,10 +98,25 @@ func New(options Options) (*Backend, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
+	if options.MaxTransfers == 0 {
+		options.MaxTransfers = defaultGlobalTransfers
+	}
+	if options.MaxTransfersPerLease == 0 {
+		options.MaxTransfersPerLease = defaultPerLeaseTransfers
+	}
+	if options.TransferTimeout == 0 {
+		options.TransferTimeout = defaultTransferTimeout
+	}
+	if options.MaxTransfers < 1 || options.MaxTransfersPerLease < 1 || options.TransferTimeout <= 0 {
+		return nil, fmt.Errorf("transfer limits and timeout must be positive")
+	}
+	if options.MaxTransfersPerLease > options.MaxTransfers {
+		return nil, fmt.Errorf("per-Lease transfer limit must not exceed global limit")
+	}
 	if options.Resources == nil || options.Pods == nil || options.Runner == nil {
 		return nil, fmt.Errorf("Kubernetes clients and command runner are required")
 	}
-	return &Backend{namespace: options.Namespace, identity: identity, pools: pools, defaultTTL: options.DefaultTTLSeconds, maxTTL: options.MaxTTLSeconds, readyTimeout: options.ReadyTimeout, pollInterval: options.PollInterval, now: options.Now, resources: options.Resources, pods: options.Pods, runner: options.Runner}, nil
+	return &Backend{namespace: options.Namespace, identity: identity, pools: pools, defaultTTL: options.DefaultTTLSeconds, maxTTL: options.MaxTTLSeconds, readyTimeout: options.ReadyTimeout, pollInterval: options.PollInterval, now: options.Now, resources: options.Resources, pods: options.Pods, runner: options.Runner, transfers: newTransferManager(options.MaxTransfers, options.MaxTransfersPerLease, options.TransferTimeout)}, nil
 }
 
 func NewFromConfig(config *rest.Config, options Options) (*Backend, error) {
@@ -171,7 +190,7 @@ func (b *Backend) Get(ctx context.Context, scope lease.Scope, id string) (lease.
 		return lease.Record{}, err
 	}
 	if !b.now().Before(record.ExpiresAt) {
-		_ = b.deleteClaim(context.WithoutCancel(ctx), id)
+		_ = b.stopLeaseAndDelete(context.WithoutCancel(ctx), id)
 		record.Status = lease.StatusExpired
 	}
 	return record, nil
@@ -191,6 +210,9 @@ func (b *Backend) Release(ctx context.Context, scope lease.Scope, id string) (le
 	} else {
 		record.Status = lease.StatusReleased
 	}
+	if err := b.transfers.stopLease(ctx, id); err != nil {
+		return lease.Record{}, err
+	}
 	if err := b.deleteClaim(ctx, id); err != nil {
 		return lease.Record{}, err
 	}
@@ -198,6 +220,9 @@ func (b *Backend) Release(ctx context.Context, scope lease.Scope, id string) (le
 }
 func (b *Backend) Delete(ctx context.Context, scope lease.Scope, id string) error {
 	if _, err := b.requireClaim(ctx, scope, id); err != nil {
+		return err
+	}
+	if err := b.transfers.stopLease(ctx, id); err != nil {
 		return err
 	}
 	return b.deleteClaim(ctx, id)
@@ -229,7 +254,7 @@ func (b *Backend) Ready(ctx context.Context) error {
 	return nil
 }
 
-func (b *Backend) Close(context.Context) error { return nil }
+func (b *Backend) Close(ctx context.Context) error { return b.transfers.close(ctx) }
 
 func (b *Backend) Exec(ctx context.Context, scope lease.Scope, id string, request lease.ExecRequest) (lease.ExecResult, error) {
 	target, err := b.requireActiveTarget(ctx, scope, id)
@@ -349,6 +374,9 @@ func (b *Backend) SweepExpired(ctx context.Context) error {
 			return err
 		}
 		if !record.ExpiresAt.After(b.now()) {
+			if err := b.transfers.stopLease(ctx, record.ID); err != nil {
+				return err
+			}
 			if err := b.deleteClaim(ctx, record.ID); err != nil {
 				return err
 			}

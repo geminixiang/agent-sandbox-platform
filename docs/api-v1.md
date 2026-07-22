@@ -71,7 +71,9 @@ Content-Digest: sha-256=:<base64 of exactly 32 digest bytes>:
 
 Lease, scope, path, file-existence, size, and readability checks happen before the `200` response is committed, so those failures use the JSON error envelope. If the reader fails after the binary response starts, the server aborts the HTTP response and never appends JSON. Clients must validate length and digest after normal EOF; callers that intentionally close early are cancelling the transfer and do not perform integrity validation.
 
-The current Kubernetes backend does **not** implement binary streaming yet. These endpoints return `501 STREAMING_NOT_SUPPORTED` for that backend. Legacy file methods continue to work. This contract does not claim Kubernetes streaming support or secure local-process isolation.
+The production Kubernetes backend implements these streaming endpoints through the sandbox runtime transfer protocol. Legacy file methods remain available. Backends without the optional streaming interface may still return `501 STREAMING_NOT_SUPPORTED`; no local-process backend is described as secure isolation.
+
+Transfers fail fast with `429 TRANSFER_LIMIT_REACHED` when either the global or per-Lease concurrency limit is full. The production defaults are 8 global and 2 per Lease. Each transfer has a total timeout (2 minutes by default), capped by Lease expiry. Cancellation, timeout, release, deletion, expiry, and backend shutdown abort active transfers with `408 ABORTED`. An idle timeout is intentionally not claimed in this release; the bounded total timeout is the enforced guarantee.
 
 Upload validation codes are:
 
@@ -81,7 +83,12 @@ Upload validation codes are:
 | `400` | `INVALID_CONTENT_DIGEST` | Missing or non-canonical SHA-256 `Content-Digest` |
 | `400` | `CONTENT_LENGTH_MISMATCH` | Body byte count differs from `Content-Length` |
 | `411` | `LENGTH_REQUIRED` | No known `Content-Length` |
+| `408` | `ABORTED` | Transfer was cancelled, timed out, or stopped by Lease/backend lifecycle |
+| `404` | `FILE_NOT_FOUND` | Download source does not exist |
 | `413` | `TRANSFER_TOO_LARGE` | Declared or preflighted transfer exceeds 64 MiB |
+| `429` | `TRANSFER_LIMIT_REACHED` | Global or per-Lease transfer concurrency is full |
+| `400` | `INVALID_PATH` | Path escapes the workspace, traverses a symlink, or is not a regular file |
+| `502` | `FILE_TRANSFER_FAILED` | The sandbox runtime transfer protocol failed without exposing runtime details |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | Upload is not `application/octet-stream` |
 | `422` | `CONTENT_DIGEST_MISMATCH` | Body SHA-256 differs from `Content-Digest` |
 | `501` | `STREAMING_NOT_SUPPORTED` | Backend does not implement the optional streaming interface |

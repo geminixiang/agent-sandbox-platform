@@ -13,10 +13,15 @@ export declare const LEASE_STATUS: Readonly<{
 export type LeaseStatus = "active" | "released" | "expired";
 export type FileEncoding = "utf8" | "base64";
 export type FileTransferErrorCode =
+  | "ABORTED"
+  | "FILE_NOT_FOUND"
+  | "FILE_TRANSFER_FAILED"
+  | "INVALID_PATH"
   | "INVALID_REQUEST"
   | "INVALID_CONTENT_DIGEST"
   | "CONTENT_LENGTH_MISMATCH"
   | "LENGTH_REQUIRED"
+  | "TRANSFER_LIMIT_REACHED"
   | "TRANSFER_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "CONTENT_DIGEST_MISMATCH"

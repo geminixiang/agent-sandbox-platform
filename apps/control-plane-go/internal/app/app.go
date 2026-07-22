@@ -19,18 +19,21 @@ import (
 )
 
 type Config struct {
-	Address           string
-	Kubeconfig        string
-	KubeContext       string
-	Namespace         string
-	MetadataSecret    string
-	ConsumerSecrets   map[string]string
-	Pools             map[string]kubernetesbackend.Pool
-	DefaultTTLSeconds int
-	MaxTTLSeconds     int
-	ReadyTimeout      time.Duration
-	PollInterval      time.Duration
-	SweepInterval     time.Duration
+	Address                   string
+	Kubeconfig                string
+	KubeContext               string
+	Namespace                 string
+	MetadataSecret            string
+	ConsumerSecrets           map[string]string
+	Pools                     map[string]kubernetesbackend.Pool
+	DefaultTTLSeconds         int
+	MaxTTLSeconds             int
+	ReadyTimeout              time.Duration
+	PollInterval              time.Duration
+	SweepInterval             time.Duration
+	FileTransferMaxConcurrent int
+	FileTransferMaxPerLease   int
+	FileTransferTimeout       time.Duration
 }
 
 type lifecycleBackend interface {
@@ -62,16 +65,19 @@ type App struct {
 
 func LoadConfig(getenv func(string) string) (Config, error) {
 	config := Config{
-		Address:           env(getenv, "SANDBOX_ADDRESS", "127.0.0.1:8787"),
-		Kubeconfig:        getenv("SANDBOX_KUBECONFIG"),
-		KubeContext:       getenv("SANDBOX_K8S_CONTEXT"),
-		Namespace:         getenv("SANDBOX_K8S_NAMESPACE"),
-		MetadataSecret:    getenv("SANDBOX_METADATA_SECRET"),
-		DefaultTTLSeconds: 900,
-		MaxTTLSeconds:     3600,
-		ReadyTimeout:      2 * time.Minute,
-		PollInterval:      500 * time.Millisecond,
-		SweepInterval:     30 * time.Second,
+		Address:                   env(getenv, "SANDBOX_ADDRESS", "127.0.0.1:8787"),
+		Kubeconfig:                getenv("SANDBOX_KUBECONFIG"),
+		KubeContext:               getenv("SANDBOX_K8S_CONTEXT"),
+		Namespace:                 getenv("SANDBOX_K8S_NAMESPACE"),
+		MetadataSecret:            getenv("SANDBOX_METADATA_SECRET"),
+		DefaultTTLSeconds:         900,
+		MaxTTLSeconds:             3600,
+		ReadyTimeout:              2 * time.Minute,
+		PollInterval:              500 * time.Millisecond,
+		SweepInterval:             30 * time.Second,
+		FileTransferMaxConcurrent: 8,
+		FileTransferMaxPerLease:   2,
+		FileTransferTimeout:       2 * time.Minute,
 	}
 	if strings.TrimSpace(config.Namespace) == "" {
 		return Config{}, errors.New("SANDBOX_K8S_NAMESPACE is required")
@@ -101,6 +107,18 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if config.SweepInterval, err = positiveDuration(getenv, "SANDBOX_SWEEP_INTERVAL", config.SweepInterval); err != nil {
 		return Config{}, err
 	}
+	if config.FileTransferMaxConcurrent, err = positiveInt(getenv, "SANDBOX_FILE_TRANSFER_MAX_CONCURRENT", config.FileTransferMaxConcurrent); err != nil {
+		return Config{}, err
+	}
+	if config.FileTransferMaxPerLease, err = positiveInt(getenv, "SANDBOX_FILE_TRANSFER_MAX_PER_LEASE", config.FileTransferMaxPerLease); err != nil {
+		return Config{}, err
+	}
+	if config.FileTransferMaxPerLease > config.FileTransferMaxConcurrent {
+		return Config{}, errors.New("SANDBOX_FILE_TRANSFER_MAX_PER_LEASE must not exceed SANDBOX_FILE_TRANSFER_MAX_CONCURRENT")
+	}
+	if config.FileTransferTimeout, err = positiveDuration(getenv, "SANDBOX_FILE_TRANSFER_TIMEOUT", config.FileTransferTimeout); err != nil {
+		return Config{}, err
+	}
 	return config, nil
 }
 
@@ -125,7 +143,7 @@ func newKubernetesBackend(config Config) (lifecycleBackend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load Kubernetes configuration: %w", err)
 	}
-	return kubernetesbackend.NewFromConfig(restConfig, kubernetesbackend.Options{Namespace: config.Namespace, MetadataSecret: config.MetadataSecret, Pools: config.Pools, DefaultTTLSeconds: config.DefaultTTLSeconds, MaxTTLSeconds: config.MaxTTLSeconds, ReadyTimeout: config.ReadyTimeout, PollInterval: config.PollInterval})
+	return kubernetesbackend.NewFromConfig(restConfig, kubernetesbackend.Options{Namespace: config.Namespace, MetadataSecret: config.MetadataSecret, Pools: config.Pools, DefaultTTLSeconds: config.DefaultTTLSeconds, MaxTTLSeconds: config.MaxTTLSeconds, ReadyTimeout: config.ReadyTimeout, PollInterval: config.PollInterval, MaxTransfers: config.FileTransferMaxConcurrent, MaxTransfersPerLease: config.FileTransferMaxPerLease, TransferTimeout: config.FileTransferTimeout})
 }
 
 func (a *App) Run(ctx context.Context) error {

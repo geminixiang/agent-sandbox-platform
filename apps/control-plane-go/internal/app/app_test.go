@@ -12,19 +12,27 @@ import (
 
 func TestLoadConfigRequiresKubernetesState(t *testing.T) {
 	values := map[string]string{
-		"SANDBOX_K8S_NAMESPACE":    "platform",
-		"SANDBOX_METADATA_SECRET":  "metadata",
-		"SANDBOX_CONSUMER_SECRETS": `{"mikan":"secret"}`,
-		"SANDBOX_K8S_POOLS":        `{"coding":{"warmPoolName":"pool","runtimeClassName":"gvisor","containerName":"shell"}}`,
-		"SANDBOX_SWEEP_INTERVAL":   "5s",
+		"SANDBOX_K8S_NAMESPACE":                "platform",
+		"SANDBOX_METADATA_SECRET":              "metadata",
+		"SANDBOX_CONSUMER_SECRETS":             `{"mikan":"secret"}`,
+		"SANDBOX_K8S_POOLS":                    `{"coding":{"warmPoolName":"pool","runtimeClassName":"gvisor","containerName":"shell"}}`,
+		"SANDBOX_SWEEP_INTERVAL":               "5s",
+		"SANDBOX_FILE_TRANSFER_MAX_CONCURRENT": "6",
+		"SANDBOX_FILE_TRANSFER_MAX_PER_LEASE":  "2",
+		"SANDBOX_FILE_TRANSFER_TIMEOUT":        "45s",
 	}
 	config, err := LoadConfig(func(name string) string { return values[name] })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Namespace != "platform" || config.SweepInterval != 5*time.Second || config.Pools["coding"].WarmPoolName != "pool" {
+	if config.Namespace != "platform" || config.SweepInterval != 5*time.Second || config.FileTransferMaxConcurrent != 6 || config.FileTransferMaxPerLease != 2 || config.FileTransferTimeout != 45*time.Second || config.Pools["coding"].WarmPoolName != "pool" {
 		t.Fatalf("config = %#v", config)
 	}
+	values["SANDBOX_FILE_TRANSFER_MAX_PER_LEASE"] = "7"
+	if _, err := LoadConfig(func(name string) string { return values[name] }); err == nil {
+		t.Fatal("accepted per-Lease transfer limit above global limit")
+	}
+	values["SANDBOX_FILE_TRANSFER_MAX_PER_LEASE"] = "2"
 	delete(values, "SANDBOX_METADATA_SECRET")
 	if _, err := LoadConfig(func(name string) string { return values[name] }); err == nil {
 		t.Fatal("accepted missing metadata secret")

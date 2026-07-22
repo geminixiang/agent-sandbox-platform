@@ -184,6 +184,18 @@ test("download truncation and streaming preflight errors are typed", async () =>
     assert.equal(error.code, "STREAMING_NOT_SUPPORTED");
     return true;
   });
+
+  const limitedClient = clientWithFetch(async (url) => {
+    if (!String(url).includes("/files/content")) return jsonResponse({ lease: record });
+    return jsonResponse({ error: { code: "TRANSFER_LIMIT_REACHED", message: "busy" } }, 429);
+  });
+  const limitedLease = await limitedClient.get("lease_1");
+  await assert.rejects(limitedLease.readFileStream("/workspace/data.bin"), (error) => {
+    assert.ok(error instanceof SandboxPlatformError);
+    assert.equal(error.status, 429);
+    assert.equal(error.code, "TRANSFER_LIMIT_REACHED");
+    return true;
+  });
 });
 
 test("creates verifiable short-lived subject claims without exposing the secret", () => {

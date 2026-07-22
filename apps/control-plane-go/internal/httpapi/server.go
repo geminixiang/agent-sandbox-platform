@@ -23,7 +23,7 @@ import (
 const (
 	leasePath            = "/v1/leases"
 	maxJSONBodySize      = 1024 * 1024
-	MaxFileTransferBytes = 64 * 1024 * 1024
+	MaxFileTransferBytes = lease.MaxFileTransferBytes
 )
 
 type Readiness func(context.Context) error

@@ -4,7 +4,22 @@
   "properties": {
     "replicaCount": { "const": 1 },
     "existingSecret": { "type": "string", "minLength": 1 },
+    "controlPlane": {
+      "type": "object",
+      "properties": {
+        "fileTransfer": {
+          "type": "object",
+          "properties": {
+            "maxConcurrent": { "type": "integer", "minimum": 1 },
+            "maxPerLease": { "type": "integer", "minimum": 1 },
+            "timeout": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$" }
+          },
+          "required": ["maxConcurrent", "maxPerLease", "timeout"]
+        }
+      },
+      "required": ["fileTransfer"]
+    },
     "pools": { "type": "object", "minProperties": 1 }
   },
-  "required": ["replicaCount", "existingSecret", "pools"]
+  "required": ["replicaCount", "existingSecret", "controlPlane", "pools"]
 }

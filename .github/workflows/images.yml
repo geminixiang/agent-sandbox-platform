@@ -22,10 +22,10 @@ jobs:
         include:
           - image: agent-sandbox-browser
             dockerfile: images/browser/Dockerfile
-            context: images/browser
+            context: .
           - image: agent-sandbox-coding
             dockerfile: images/coding/Dockerfile
-            context: images/coding
+            context: .
           - image: agent-sandbox-control-plane
             dockerfile: images/control-plane/Dockerfile
             context: .

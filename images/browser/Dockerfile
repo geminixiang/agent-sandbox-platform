@@ -1,3 +1,10 @@
+FROM golang:1.25-bookworm AS transfer-helper
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download golang.org/x/sys
+COPY images/runtime/file-transfer/main.go ./main.go
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agent-sandbox-transfer ./main.go
+
 FROM node:22.19.0-bookworm-slim
 
 ARG PLAYWRIGHT_VERSION=1.55.0
@@ -20,7 +27,8 @@ ENV HOME=/home/sandbox \
     PLAYWRIGHT_BROWSERS_PATH=0 \
     CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-COPY smoke.mjs /opt/browser/smoke.mjs
+COPY --from=transfer-helper /agent-sandbox-transfer /usr/local/bin/agent-sandbox-transfer
+COPY images/browser/smoke.mjs /opt/browser/smoke.mjs
 
 USER 10001:10001
 WORKDIR /workspace

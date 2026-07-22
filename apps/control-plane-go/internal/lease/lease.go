@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-const WorkspacePath = "/workspace"
+const (
+	WorkspacePath        = "/workspace"
+	MaxFileTransferBytes = 64 * 1024 * 1024
+)
 
 type Status string
 

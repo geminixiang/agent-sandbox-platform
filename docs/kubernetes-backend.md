@@ -10,6 +10,7 @@ The Kubernetes backend maps each Platform Lease to one `SandboxClaim`. Kubernete
 - One or more `SandboxWarmPool` resources
 - A configured RuntimeClass such as `gvisor` or `kata-qemu`
 - Control-plane credentials with SandboxClaim, Sandbox, Pod read, Pod exec, and Claim delete permissions
+- Sandbox workload images that provide `/usr/local/bin/agent-sandbox-transfer` with the ASP1 protocol described below
 - A stable `SANDBOX_METADATA_SECRET`
 
 The current quota lock is process-local, so run exactly **one control-plane replica**. Multi-replica deployment requires a distributed acquisition lock and is intentionally not implemented yet.
@@ -31,12 +32,26 @@ export SANDBOX_K8S_POOLS='{
   }
 }'
 export SANDBOX_SWEEP_INTERVAL=30s
+export SANDBOX_FILE_TRANSFER_MAX_CONCURRENT=8
+export SANDBOX_FILE_TRANSFER_MAX_PER_LEASE=2
+export SANDBOX_FILE_TRANSFER_TIMEOUT=2m
 go run ./apps/control-plane-go/cmd/control-plane
 ```
 
 `SANDBOX_KUBECONFIG` is optional; standard in-cluster configuration and kubeconfig loading are supported. There is no process backend or host-execution fallback.
 
-The Consumer sends only `pool: "coding"`; the WarmPool and RuntimeClass mapping is server-side.
+The Consumer sends only `pool: "coding"`; the WarmPool and RuntimeClass mapping is server-side. Transfer settings must be positive, and the per-Lease limit cannot exceed the global limit. The timeout is a total transfer deadline capped by Lease expiry. A separate idle timeout is not implemented or claimed yet.
+
+## Sandbox runtime transfer contract
+
+Production Pool images must install the repository's static `agent-sandbox-transfer` helper at `/usr/local/bin/agent-sandbox-transfer`. The control plane invokes it directly over Pod exec; SDKs never see Kubernetes or helper details.
+
+- `download <absolute-workspace-path>` securely opens a regular file without following symlinks, makes a bounded snapshot, computes its exact length and SHA-256, emits one bounded `ASP1 OK <size> <hex-digest>` marker, then streams exactly that snapshot.
+- `upload <absolute-workspace-path> <size> <hex-digest>` reads the exact body, rejects short/long or digest-mismatched payloads, and atomically renames a validated sibling temporary file over the destination before emitting `ASP1 OK`.
+- Failures emit only `ASP1 ERR <stable-code>`. Marker and diagnostic buffers are bounded. Temporary names, raw utility output, Pod names, and Kubernetes errors are not exposed through HTTP.
+- Every path component is opened relative to a pinned `/workspace` directory descriptor with no-follow semantics. Missing download files map to `FILE_NOT_FOUND`; symlinks, directories, and escapes map to `INVALID_PATH`; files above 64 MiB fail before HTTP `200` with `TRANSFER_TOO_LARGE`.
+
+The published coding and browser images include this helper. Operator-supplied Pool images must satisfy the same runtime contract.
 
 ## Metadata and recovery
 

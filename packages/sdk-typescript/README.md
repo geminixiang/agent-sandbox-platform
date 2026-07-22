@@ -39,4 +39,4 @@ try {
 
 SHA-256 values at the SDK interface are lowercase 64-character hexadecimal strings. Downloads validate exact length and digest at normal EOF. Breaking iteration calls the iterator's `return()` and closes the response without integrity validation. Uploads use raw async iterables and Node fetch's `duplex: "half"`; neither direction eagerly buffers the full transfer.
 
-The existing `readFile` and `writeFile` convenience methods remain on the legacy JSON endpoints. The current Kubernetes backend does not implement streaming and returns `501 STREAMING_NOT_SUPPORTED`; this SDK interface does not claim Kubernetes streaming support.
+The existing `readFile` and `writeFile` convenience methods remain on the legacy JSON endpoints. The production Kubernetes backend implements streaming; optional backends without this capability may return `501 STREAMING_NOT_SUPPORTED`. Saturated production transfer limits return `429 TRANSFER_LIMIT_REACHED` through `SandboxPlatformError`.

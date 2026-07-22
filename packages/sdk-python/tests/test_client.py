@@ -15,6 +15,7 @@ from agent_sandbox import (
     SandboxIntegrityError,
     SandboxNotFoundError,
     SandboxStreamingNotSupportedError,
+    SandboxTransferLimitError,
     StaticToken,
 )
 
@@ -209,6 +210,22 @@ async def test_streaming_not_supported_is_typed() -> None:
                 pass
     assert captured.value.status == 501
     assert captured.value.code == "STREAMING_NOT_SUPPORTED"
+
+
+@pytest.mark.asyncio
+async def test_transfer_concurrency_limit_is_typed() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        return response({"error": {"code": "TRANSFER_LIMIT_REACHED", "message": "busy"}}, 429)
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        sandbox = await client.get("lease_1")
+        with pytest.raises(SandboxTransferLimitError) as captured:
+            async with sandbox.files.read_stream("/workspace/data.bin"):
+                pass
+    assert captured.value.status == 429
+    assert captured.value.code == "TRANSFER_LIMIT_REACHED"
 
 
 @pytest.mark.asyncio

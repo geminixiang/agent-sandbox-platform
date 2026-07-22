@@ -48,6 +48,10 @@ class SandboxTransferTooLargeError(SandboxError):
     pass
 
 
+class SandboxTransferLimitError(SandboxError):
+    pass
+
+
 class SandboxIntegrityError(SandboxError):
     pass
 
@@ -63,6 +67,7 @@ _ERROR_TYPES: dict[str, type[SandboxError]] = {
     "ABORTED": SandboxAbortedError,
     "FILE_NOT_FOUND": SandboxFileNotFoundError,
     "TRANSFER_TOO_LARGE": SandboxTransferTooLargeError,
+    "TRANSFER_LIMIT_REACHED": SandboxTransferLimitError,
     "CONTENT_LENGTH_MISMATCH": SandboxIntegrityError,
     "CONTENT_DIGEST_MISMATCH": SandboxIntegrityError,
     "INVALID_CONTENT_DIGEST": SandboxIntegrityError,

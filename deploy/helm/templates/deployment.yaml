@@ -52,6 +52,9 @@ spec:
             - { name: SANDBOX_K8S_READY_TIMEOUT, value: {{ .Values.controlPlane.readyTimeout | quote }} }
             - { name: SANDBOX_K8S_POLL_INTERVAL, value: {{ .Values.controlPlane.pollInterval | quote }} }
             - { name: SANDBOX_SWEEP_INTERVAL, value: {{ .Values.controlPlane.sweepInterval | quote }} }
+            - { name: SANDBOX_FILE_TRANSFER_MAX_CONCURRENT, value: {{ .Values.controlPlane.fileTransfer.maxConcurrent | quote }} }
+            - { name: SANDBOX_FILE_TRANSFER_MAX_PER_LEASE, value: {{ .Values.controlPlane.fileTransfer.maxPerLease | quote }} }
+            - { name: SANDBOX_FILE_TRANSFER_TIMEOUT, value: {{ .Values.controlPlane.fileTransfer.timeout | quote }} }
           readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 12 }
           livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10, failureThreshold: 3 }
           resources: {{ toYaml .Values.resources | nindent 12 }}

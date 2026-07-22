@@ -56,6 +56,6 @@ async with sandbox.files.read_stream("/workspace/output.bin") as download:
 
 `FileDownload` owns the streaming HTTP response. Use it as an async context manager so normal EOF validates length and digest and early exit closes the response. `SandboxIntegrityError` reports truncation or digest mismatch. `SandboxStreamingNotSupportedError` reports a backend without this optional capability. The existing text and bytes convenience methods intentionally continue to use the legacy JSON endpoints.
 
-The current Kubernetes backend does not support these streaming methods yet and returns `501 STREAMING_NOT_SUPPORTED`; no Kubernetes streaming support is claimed in this stage.
+The production Kubernetes backend supports these streaming methods. Optional backends without the capability may return `501 STREAMING_NOT_SUPPORTED`; saturated production transfer limits raise `SandboxTransferLimitError` with `TRANSFER_LIMIT_REACHED`.
 
 The SDK does not expose Kubernetes, Pods, CRDs, namespaces, or runtime classes.

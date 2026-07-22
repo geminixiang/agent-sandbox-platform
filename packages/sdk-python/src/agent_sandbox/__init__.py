@@ -11,6 +11,7 @@ from ._errors import (
     SandboxNotActiveError,
     SandboxQuotaExceededError,
     SandboxStreamingNotSupportedError,
+    SandboxTransferLimitError,
     SandboxTransferTooLargeError,
 )
 from ._models import CommandResult, LeaseRecord
@@ -33,6 +34,7 @@ __all__ = [
     "SandboxNotFoundError",
     "SandboxQuotaExceededError",
     "SandboxStreamingNotSupportedError",
+    "SandboxTransferLimitError",
     "SandboxTransferTooLargeError",
     "StaticToken",
     "TokenProvider",

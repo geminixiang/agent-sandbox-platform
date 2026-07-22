@@ -52,7 +52,7 @@ pools:
     containerName: shell
     enabled: true
     replicas: 1
-    image: alpine:3.22
+    image: ghcr.io/geminixiang/agent-sandbox-coding:0.1.0
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600; done"]
     workspaceSize: 1Gi
     podAnnotations: {}
@@ -64,6 +64,18 @@ pools:
 ```
 
 The chart enforces exactly one control-plane replica until distributed acquisition coordination is implemented. The Deployment uses `Recreate` to prevent rollout overlap.
+
+The default published workload image includes the required `/usr/local/bin/agent-sandbox-transfer` ASP1 helper. Every operator-supplied Pool image must provide that helper; otherwise streaming endpoints fail with the stable `FILE_TRANSFER_FAILED` response. Configure bounded transfer concurrency and the total timeout under `controlPlane.fileTransfer`:
+
+```yaml
+controlPlane:
+  fileTransfer:
+    maxConcurrent: 8
+    maxPerLease: 2
+    timeout: 2m
+```
+
+The per-Lease value must not exceed the global value. The total timeout is capped by Lease expiry; this release intentionally does not claim a separate idle timeout.
 
 ## Security defaults
 

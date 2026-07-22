@@ -56,10 +56,14 @@ func (b *Backend) requireActiveTarget(ctx context.Context, scope lease.Scope, id
 		return podTarget{}, err
 	}
 	if !record.ExpiresAt.After(b.now()) {
-		_ = b.deleteClaim(ctx, id)
+		_ = b.stopLeaseAndDelete(context.WithoutCancel(ctx), id)
 		return podTarget{}, lease.NewError(409, "LEASE_NOT_ACTIVE", "Lease is not active")
 	}
-	pool, ok := b.pools[record.Pool]
+	return b.targetForClaim(ctx, claim, record.Pool)
+}
+
+func (b *Backend) targetForClaim(ctx context.Context, claim *unstructured.Unstructured, poolName string) (podTarget, error) {
+	pool, ok := b.pools[poolName]
 	if !ok {
 		return podTarget{}, lease.NewError(500, "POOL_CONFIGURATION_MISSING", "Lease pool configuration is unavailable")
 	}

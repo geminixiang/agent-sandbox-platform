@@ -1,3 +1,10 @@
+FROM golang:1.25-bookworm AS transfer-helper
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download golang.org/x/sys
+COPY images/runtime/file-transfer/main.go ./main.go
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agent-sandbox-transfer ./main.go
+
 FROM python:3.13.5-slim-bookworm
 
 RUN apt-get update \
@@ -12,6 +19,8 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 --shell /bin/bash sandbox \
     && mkdir -p /workspace \
     && chown sandbox:sandbox /workspace
+
+COPY --from=transfer-helper /agent-sandbox-transfer /usr/local/bin/agent-sandbox-transfer
 
 ENV HOME=/home/sandbox \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
