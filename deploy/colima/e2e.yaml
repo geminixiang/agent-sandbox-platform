@@ -12,10 +12,22 @@ spec:
   podTemplate:
     spec:
       runtimeClassName: gvisor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: shell
           image: alpine:3.22
           command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600; done"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           resources:
             requests:
               cpu: 10m

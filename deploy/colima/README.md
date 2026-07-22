@@ -57,6 +57,8 @@ The smoke test builds and starts the production Go control plane, drives it thro
 - control-plane restart recovery,
 - release and Claim cleanup.
 
+The coding and browser templates run as non-root UID/GID `10001`, disallow privilege escalation, and use the default seccomp profile. The coding image additionally drops all Linux capabilities and uses a read-only root filesystem; `/workspace` is the writable PVC.
+
 ## Browser gVisor test
 
 Build the pinned Chromium/Playwright image inside Colima and run a real browser under gVisor:

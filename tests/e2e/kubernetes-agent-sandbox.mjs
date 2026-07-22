@@ -46,10 +46,13 @@ try {
   ));
   await lease.writeFile("/workspace/message.txt", "hello from Go on Kubernetes");
   assert.equal(await lease.readFile("/workspace/message.txt"), "hello from Go on Kubernetes");
-  const result = await lease.exec("uname -r; cat message.txt", { cwd: "/workspace" });
+  const result = await lease.exec("uname -r; id -u; id -g; cat message.txt", { cwd: "/workspace" });
   assert.equal(result.code, 0);
-  assert.match(result.stdout, /gvisor/);
-  assert.match(result.stdout, /hello from Go on Kubernetes/);
+  const [kernel, uid, gid, ...file] = result.stdout.split("\n");
+  assert.match(kernel, /gvisor/);
+  assert.equal(uid, "10001");
+  assert.equal(gid, "10001");
+  assert.equal(file.join("\n"), "hello from Go on Kubernetes");
 
   child.kill("SIGTERM");
   await onceExit(child);
