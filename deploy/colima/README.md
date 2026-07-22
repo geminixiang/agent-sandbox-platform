@@ -16,4 +16,6 @@ SANDBOX_E2E_KUBECONTEXT=colima-agent-sandbox-gvisor npm run test:e2e:kubernetes
 kubectl --context colima-agent-sandbox-gvisor delete namespace agent-sandbox-platform-e2e
 ```
 
-The process backend is only for trusted contract development. Use the Kubernetes backend for isolation integration tests.
+The E2E test starts the production Go control plane and drives it through the TypeScript SDK. It verifies acquire, gVisor execution, workspace files, control-plane restart recovery, release, and cleanup.
+
+There is no local process backend. Local development uses the same Kubernetes path as cloud deployments.

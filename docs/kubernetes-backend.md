@@ -62,4 +62,4 @@ SANDBOX_E2E_KUBECONTEXT=colima-agent-sandbox-gvisor npm run test:e2e:kubernetes
 kubectl --context colima-agent-sandbox-gvisor delete namespace agent-sandbox-platform-e2e
 ```
 
-The test verifies acquire, gVisor runtime, exec, files, restart recovery, quota, release, expiry, and cleanup.
+The test starts the production Go control plane and drives it through the published TypeScript SDK. It verifies acquire, gVisor runtime, exec, files, control-plane restart recovery, release, and cleanup.
