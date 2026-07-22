@@ -206,6 +206,9 @@ func (b *Backend) Ready(ctx context.Context) error {
 	if _, err := b.resources.List(ctx, claimResource, b.namespace, metav1.ListOptions{Limit: 1}); err != nil {
 		return fmt.Errorf("list SandboxClaims: %w", err)
 	}
+	if _, err := b.resources.List(ctx, sandboxResource, b.namespace, metav1.ListOptions{Limit: 1}); err != nil {
+		return fmt.Errorf("list Sandboxes: %w", err)
+	}
 	for name, pool := range b.pools {
 		warmPool, err := b.resources.Get(ctx, warmPoolResource, b.namespace, pool.WarmPoolName, metav1.GetOptions{})
 		if err != nil {
