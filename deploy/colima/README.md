@@ -43,6 +43,8 @@ Run it a second time to verify convergence:
 ./scripts/local/up.sh
 ```
 
+On an already-converged profile, `up.sh` verifies the pinned controller/CRDs instead of downloading and reapplying them. `build-browser.sh` labels the local image with a source hash and skips rebuilding unchanged sources.
+
 ## Smoke test
 
 ```bash

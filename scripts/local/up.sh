@@ -89,13 +89,22 @@ fi
 
 kubectl --context "${context}" apply -f "${REPO_ROOT}/deploy/colima/runtimeclass-gvisor.yaml"
 
-manifest="$(mktemp)"
-trap 'rm -f "${manifest}"' EXIT
 manifest_url="https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
-echo "Installing Agent Sandbox ${AGENT_SANDBOX_VERSION}..."
-curl -fsSL "${manifest_url}" -o "${manifest}"
-echo "${AGENT_SANDBOX_MANIFEST_SHA256}  ${manifest}" | shasum -a 256 -c -
-kubectl --context "${context}" apply --server-side --force-conflicts -f "${manifest}"
+installed_image="$(kubectl --context "${context}" -n agent-sandbox-system get deployment agent-sandbox-controller -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+crds_ready=true
+for crd in sandboxclaims.extensions.agents.x-k8s.io sandboxes.agents.x-k8s.io sandboxtemplates.extensions.agents.x-k8s.io sandboxwarmpools.extensions.agents.x-k8s.io; do
+  kubectl --context "${context}" get crd "${crd}" >/dev/null 2>&1 || crds_ready=false
+done
+if [[ "${installed_image}" == "registry.k8s.io/agent-sandbox/agent-sandbox-controller:${AGENT_SANDBOX_VERSION}" ]] && ${crds_ready}; then
+  echo "Agent Sandbox ${AGENT_SANDBOX_VERSION} is already installed"
+else
+  manifest="$(mktemp)"
+  trap 'rm -f "${manifest}"' EXIT
+  echo "Installing Agent Sandbox ${AGENT_SANDBOX_VERSION}..."
+  curl -fsSL "${manifest_url}" -o "${manifest}"
+  echo "${AGENT_SANDBOX_MANIFEST_SHA256}  ${manifest}" | shasum -a 256 -c -
+  kubectl --context "${context}" apply --server-side --force-conflicts -f "${manifest}"
+fi
 kubectl --context "${context}" -n agent-sandbox-system rollout status deployment/agent-sandbox-controller --timeout=180s
 
 kubectl --context "${context}" apply -f "${REPO_ROOT}/deploy/colima/e2e.yaml"
