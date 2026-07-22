@@ -1,7 +1,15 @@
 # ADR 0005: Gate durable commands on a trusted Sandbox supervisor
 
-- Status: Accepted for prototype; production decision pending gate evidence
+- Status: Gate blocked; production decision deferred
 - Date: 2026-07-23
+
+## Gate outcome
+
+The Stage 6.0 gate ran on Colima+k3s+gVisor at commit `2c5e2ce` and is recorded in [test report #7](https://github.com/geminixiang/agent-sandbox-platform/issues/7).
+
+All core supervisor checks passed, but a customer descendant using `setsid(2)` escaped process-group termination. The gVisor container exposed no unified cgroup v2 directory, writable delegated subtree, or `cgroup.kill`. Consequently, no enabled mechanism could enforce kill, release, expiry, or quota semantics for every descendant.
+
+Production durable command sessions are blocked. The current foreground `/exec` remains unchanged. Stage 6.1 may resume only after an upstream or runtime containment primitive passes the same new-session-descendant gate without privileged mode or broader capabilities.
 
 ## Context
 
