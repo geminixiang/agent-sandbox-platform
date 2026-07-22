@@ -1,6 +1,7 @@
 from ._client import Sandbox, SandboxClient, SandboxFiles
 from ._credentials import AsyncTokenProvider, StaticToken, TokenProvider
 from ._errors import (
+    CommandFailedError,
     SandboxAbortedError,
     SandboxError,
     SandboxExpiredError,
@@ -12,6 +13,7 @@ from ._models import CommandResult, LeaseRecord
 
 __all__ = [
     "AsyncTokenProvider",
+    "CommandFailedError",
     "CommandResult",
     "LeaseRecord",
     "Sandbox",

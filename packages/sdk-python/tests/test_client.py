@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from agent_sandbox import SandboxClient, SandboxNotFoundError, StaticToken
+from agent_sandbox import CommandFailedError, SandboxClient, SandboxNotFoundError, StaticToken
 
 RECORD = {
     "id": "lease_1",
@@ -66,6 +66,29 @@ async def test_async_credential_provider_and_typed_error() -> None:
             await client.get("missing")
     assert captured.value.code == "LEASE_NOT_FOUND"
     assert captured.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_checked_command_failure_preserves_diagnostics() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases":
+            return response({"lease": RECORD, "replayed": False}, 201)
+        if request.url.path.endswith("/exec"):
+            return response({"stdout": "partial output\n", "stderr": "traceback\n", "code": 17})
+        raise AssertionError(f"unexpected request {request.method} {request.url.path}")
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        sandbox = await client.create(pool="coding")
+        with pytest.raises(CommandFailedError) as captured:
+            await sandbox.run("python broken.py", check=True)
+
+    assert captured.value.command == "python broken.py"
+    assert captured.value.result.stdout == "partial output\n"
+    assert captured.value.result.stderr == "traceback\n"
+    assert captured.value.result.exit_code == 17
+    assert captured.value.code == "COMMAND_FAILED"
+    assert captured.value.status is None
+    assert str(captured.value) == "command exited with status 17"
 
 
 def response(body: dict[str, Any], status: int = 200) -> httpx.Response:

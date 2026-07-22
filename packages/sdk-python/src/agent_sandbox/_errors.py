@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+from ._models import CommandResult
+
 
 class SandboxError(Exception):
     def __init__(self, message: str, *, code: str | None = None, status: int | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+
+
+class CommandFailedError(SandboxError):
+    def __init__(self, command: str, result: CommandResult) -> None:
+        super().__init__(
+            f"command exited with status {result.exit_code}",
+            code="COMMAND_FAILED",
+        )
+        self.command = command
+        self.result = result
 
 
 class SandboxNotFoundError(SandboxError):

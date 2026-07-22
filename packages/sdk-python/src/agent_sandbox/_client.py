@@ -11,7 +11,7 @@ from typing import Any, Self, cast
 import httpx
 
 from ._credentials import TokenProvider
-from ._errors import SandboxError, error_from_response
+from ._errors import CommandFailedError, SandboxError, error_from_response
 from ._models import CommandResult, LeaseRecord
 
 
@@ -148,7 +148,7 @@ class Sandbox:
         payload = await self._client.request("POST", f"v1/leases/{self.id}/exec", json=body)
         result = CommandResult(stdout=_required_str(payload, "stdout"), stderr=_required_str(payload, "stderr"), exit_code=_required_int(payload, "code"))
         if check and not result.succeeded:
-            raise SandboxError(f"command exited with status {result.exit_code}", code="COMMAND_FAILED")
+            raise CommandFailedError(command, result)
         return result
 
     async def refresh(self) -> LeaseRecord:
