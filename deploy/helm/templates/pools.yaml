@@ -6,6 +6,10 @@ metadata:
   name: {{ $pool.warmPoolName }}
   labels: {{- include "agent-sandbox-platform.labels" $ | nindent 4 }}
 spec:
+  {{- with $pool.networkPolicy }}
+  networkPolicyManagement: Managed
+  networkPolicy: {{ toYaml . | nindent 4 }}
+  {{- end }}
   podTemplate:
     {{- with $pool.podAnnotations }}
     metadata:
@@ -13,6 +17,9 @@ spec:
     {{- end }}
     spec:
       automountServiceAccountToken: false
+      {{- with $pool.dnsPolicy }}
+      dnsPolicy: {{ . }}
+      {{- end }}
       runtimeClassName: {{ $pool.runtimeClassName }}
       securityContext:
         runAsNonRoot: true

@@ -28,4 +28,11 @@ helm template platform "${chart}" --namespace agent-sandbox-platform --set prefl
 grep -q 'sandbox.gke.io/runtime: gvisor' "${gke_rendered}"
 grep -q 'kind: SandboxWarmPool' "${gke_rendered}"
 grep -q 'name: platform-browser' "${gke_rendered}"
+
+e2e_rendered="$(mktemp)"
+trap 'rm -f "${rendered}" "${gke_rendered}" "${e2e_rendered}"' EXIT
+helm template platform "${chart}" --namespace agent-sandbox-platform --set preflight.enabled=false --values "${ROOT}/deploy/gke/values-gvisor.yaml" --values "${ROOT}/deploy/gke/values-workload-e2e.yaml" >"${e2e_rendered}"
+grep -q 'dnsPolicy: ClusterFirst' "${e2e_rendered}"
+grep -q 'app: workload-fixture' "${e2e_rendered}"
+grep -q '169.254.0.0/16' "${e2e_rendered}"
 echo "Helm chart verification passed"

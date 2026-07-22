@@ -1,0 +1,54 @@
+# Opt-in policy used only by the GKE daily-work E2E fixture.
+# It keeps public-internet isolation while allowing DNS and one approved
+# namespace-local service. Do not treat this as the default Pool policy.
+
+pools:
+  coding: &workloadPool
+    dnsPolicy: ClusterFirst
+    networkPolicy:
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: agent-sandbox-system
+              podSelector:
+                matchLabels:
+                  app: sandbox-router
+      egress:
+        - ports:
+            - { protocol: UDP, port: 53 }
+            - { protocol: TCP, port: 53 }
+        - to:
+            - podSelector:
+                matchLabels:
+                  app: workload-fixture
+          ports:
+            - { protocol: TCP, port: 8080 }
+        - to:
+            - ipBlock:
+                cidr: 0.0.0.0/0
+                except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+            - ipBlock:
+                cidr: ::/0
+                except: [fc00::/7, fe80::/10]
+
+  browser:
+    <<: *workloadPool
+    enabled: true
+    warmPoolName: platform-browser
+    runtimeClassName: gvisor
+    containerName: browser
+    replicas: 1
+    image: ghcr.io/geminixiang/agent-sandbox-browser:0.1.0
+    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600; done"]
+    workspaceSize: 2Gi
+    nodeSelector:
+      sandbox.gke.io/runtime: gvisor
+    tolerations:
+      - key: sandbox.gke.io/runtime
+        operator: Equal
+        value: gvisor
+        effect: NoSchedule
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 2Gi }

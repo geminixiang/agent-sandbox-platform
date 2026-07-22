@@ -41,6 +41,9 @@ pools:
     podAnnotations: {}
     nodeSelector: {}
     tolerations: []
+    # Leave unset to retain Agent Sandbox secure-default public-only egress and public DNS.
+    dnsPolicy: ""
+    networkPolicy: null
     resources:
       requests: { cpu: 10m, memory: 16Mi }
       limits: { cpu: 500m, memory: 256Mi }

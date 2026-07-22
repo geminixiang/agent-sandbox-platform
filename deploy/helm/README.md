@@ -75,7 +75,7 @@ The chart enforces exactly one control-plane replica until distributed acquisiti
 - ingress NetworkPolicy enabled by default;
 - non-root Pool workloads with default seccomp.
 
-Pool RuntimeClass and images remain operator policy; SDK consumers only select logical Pool names.
+Pool RuntimeClass, images, scheduling, and optional network policy remain operator policy; SDK consumers only select logical Pool names. If `networkPolicy` and `dnsPolicy` are unset, upstream Agent Sandbox applies its secure-default public-internet-only egress and public DNS. A custom Pool policy can allow narrowly selected internal services; it replaces that upstream default, so operators must preserve router ingress, DNS, public egress, and private-range exclusions intentionally.
 
 ## Verify
 

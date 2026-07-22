@@ -56,6 +56,16 @@ helm upgrade --install agent-sandbox-platform ./deploy/helm \
 
 Do not run these commands against an existing cluster until its context, ownership, maintenance constraints, and acceptable changes have been confirmed.
 
+## Daily-work acceptance test
+
+The opt-in E2E profile temporarily gives the two Pools DNS plus access to a single labeled fixture Service while preserving public-internet egress and private-range exclusions. It tests crawler, Git/GitHub HTTPS, and Playwright form/popup/download workflows through the built Python wheel, then restores the secure-default GKE profile:
+
+```bash
+./scripts/gke/workload-smoke.sh
+```
+
+The script is context-pinned to `agent-sandbox-e2e` and reads local credentials from `.sandbox-platform/gke-e2e.json`. It must not be run against another cluster. The checked-in fixture sends no crawl load to third-party sites; external canaries are limited to one GitHub API request, one shallow clone of GitHub's `octocat/Hello-World`, and `example.com`.
+
 ## Verify
 
 ```bash
