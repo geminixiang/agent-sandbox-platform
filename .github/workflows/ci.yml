@@ -31,6 +31,13 @@ jobs:
       - run: npm test
       - run: npm run test:package
       - run: go test ./...
+      - name: Verify pi extension
+        working-directory: .pi/extensions/agent-sandbox
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+          npm test
+          npm audit --omit=dev
       - name: Verify Python SDK
         working-directory: packages/sdk-python
         run: |
