@@ -7,7 +7,9 @@ helm lint "${chart}"
 rendered="$(mktemp)"
 trap 'rm -f "${rendered}"' EXIT
 helm template platform "${chart}" --namespace agent-sandbox-platform --set preflight.enabled=false >"${rendered}"
-kubectl apply --dry-run=client --validate=false -f "${rendered}" >/dev/null
+
+# helm lint and template validate chart/schema/rendering without requiring Kubernetes discovery.
+# Real API validation is covered by the Colima Helm rollout smoke test.
 
 if helm template platform "${chart}" --namespace agent-sandbox-platform --set preflight.enabled=false --set replicaCount=2 >/dev/null 2>&1; then
   echo "ERROR: chart accepted replicaCount=2" >&2
