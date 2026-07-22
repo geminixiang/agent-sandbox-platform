@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createSubjectToken, PlatformClient, redact, resolveSecretEnvironment, type LocalCredentials, type SandboxRecord } from "./client.js";
+import { createSubjectToken, PlatformClient, redact, resolveSecretEnvironment, summarizeBase64, type LocalCredentials, type SandboxRecord } from "./client.js";
 
 const sandboxId = Type.Optional(Type.String({ description: "Sandbox ID; defaults to this pi session's current sandbox" }));
 const secretMapping = Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Map sandbox variable names to host environment variable names. Secret values must never be passed directly." }));
@@ -53,9 +53,13 @@ export default function agentSandboxExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "sandbox_read_file", label: "Sandbox Read File", description: "Read UTF-8 text or base64 bytes from the Sandbox workspace.",
-    parameters: Type.Object({ sandboxId, path: Type.String(), encoding: Type.Optional(Type.Union([Type.Literal("utf8"), Type.Literal("base64")], { default: "utf8" })) }),
-    async execute(_id, params, signal) { return text(await client.readFile(resolveId(params.sandboxId), params.path, params.encoding ?? "utf8", signal)); },
+    name: "sandbox_read_file", label: "Sandbox Read File", description: "Read a workspace file. Base64 content is summarized by default to avoid flooding model context; opt in only for small content.",
+    parameters: Type.Object({ sandboxId, path: Type.String(), encoding: Type.Optional(Type.Union([Type.Literal("utf8"), Type.Literal("base64")], { default: "utf8" })), includeContent: Type.Optional(Type.Boolean({ description: "Include full base64 content; rejected above 256 KiB", default: false })) }),
+    async execute(_id, params, signal) {
+      const encoding = params.encoding ?? "utf8";
+      const content = await client.readFile(resolveId(params.sandboxId), params.path, encoding, signal);
+      return text(encoding === "base64" ? summarizeBase64(params.path, content, params.includeContent ?? false) : content);
+    },
   });
 
   pi.registerTool({

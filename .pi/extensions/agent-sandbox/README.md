@@ -30,7 +30,7 @@ Tools:
 - `sandbox_status`
 - `sandbox_exec`
 - `sandbox_write_file`
-- `sandbox_read_file`
+- `sandbox_read_file` returns UTF-8 text directly. For base64 files it returns metadata (`bytes`, `base64Characters`, `sha256`) by default; set `includeContent=true` only for small files.
 - `sandbox_browser_run`
 - `sandbox_close`
 

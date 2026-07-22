@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 export interface LocalCredentials {
   baseUrl: string;
@@ -70,6 +70,22 @@ export class PlatformClient {
     }
     return payload;
   }
+}
+
+export function summarizeBase64(path: string, content: string, includeContent = false): Record<string, unknown> {
+  const bytes = Buffer.from(content, "base64");
+  const result: Record<string, unknown> = {
+    path,
+    encoding: "base64",
+    bytes: bytes.length,
+    base64Characters: content.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  if (includeContent) {
+    if (content.length > 256 * 1024) throw new Error("Base64 content exceeds the 256 KiB tool output limit");
+    result.content = content;
+  }
+  return result;
 }
 
 export function resolveSecretEnvironment(mapping: Record<string,string> | undefined, environment: NodeJS.ProcessEnv = process.env): { values: Record<string,string>; secrets: string[] } {
