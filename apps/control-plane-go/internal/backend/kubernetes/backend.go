@@ -215,8 +215,15 @@ func (b *Backend) Ready(ctx context.Context) error {
 			return fmt.Errorf("get WarmPool for Pool %q: %w", name, err)
 		}
 		ready, found, err := unstructured.NestedInt64(warmPool.Object, "status", "readyReplicas")
-		if err != nil || !found || ready < 1 {
-			return fmt.Errorf("WarmPool %q for Pool %q has no ready replicas", pool.WarmPoolName, name)
+		if err != nil || !found {
+			return fmt.Errorf("WarmPool %q for Pool %q does not report ready replicas", pool.WarmPoolName, name)
+		}
+		desired, found, err := unstructured.NestedInt64(warmPool.Object, "spec", "replicas")
+		if err != nil || !found || desired < 1 {
+			return fmt.Errorf("WarmPool %q for Pool %q has no desired replicas", pool.WarmPoolName, name)
+		}
+		if ready < desired {
+			return fmt.Errorf("WarmPool %q for Pool %q is not fully ready (%d/%d replicas)", pool.WarmPoolName, name, ready, desired)
 		}
 	}
 	return nil

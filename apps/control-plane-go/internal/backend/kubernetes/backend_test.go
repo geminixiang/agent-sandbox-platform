@@ -39,7 +39,7 @@ func (f *fakeResources) Get(_ context.Context, resource schema.GroupVersionResou
 		if f.warmPoolGetError != nil {
 			return nil, f.warmPoolGetError
 		}
-		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}, "status": map[string]any{"readyReplicas": f.warmPoolReady}}}, nil
+		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}, "spec": map[string]any{"replicas": int64(1)}, "status": map[string]any{"readyReplicas": f.warmPoolReady}}}, nil
 	}
 	if resource == sandboxResource {
 		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name, "annotations": map[string]any{"agents.x-k8s.io/pod-name": name}}, "status": map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}, nil
@@ -103,7 +103,7 @@ func TestReadyRequiresEveryConfiguredWarmPool(t *testing.T) {
 	}
 
 	resources.warmPoolReady = 0
-	if err := backend.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "has no ready replicas") {
+	if err := backend.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "is not fully ready") {
 		t.Fatalf("zero-capacity readiness error = %v", err)
 	}
 
