@@ -56,6 +56,20 @@ async with sandbox.files.read_stream("/workspace/output.bin") as download:
 
 `FileDownload` owns the streaming HTTP response. Use it as an async context manager so normal EOF validates length and digest and early exit closes the response. `SandboxIntegrityError` reports truncation or digest mismatch. `SandboxStreamingNotSupportedError` reports a backend without this optional capability. The existing text and bytes convenience methods intentionally continue to use the legacy JSON endpoints.
 
+Discover active sandboxes with an immutable page (`sandboxes` is a tuple) or an async iterator:
+
+```python
+page = await client.list_page(pool="coding", limit=50)
+for sandbox in page.sandboxes:
+    print(sandbox.id)
+
+async for sandbox in client.list(pool="coding", limit=50):
+    connected = await client.connect(sandbox.id)
+    print((await connected.run("pwd")).stdout)
+```
+
+`next_cursor` is opaque and is `None` on the final page. The iterator crosses valid empty intermediate pages and rejects repeated cursors. Discovery order is not recency order, and `record.last_used_at` is not recency-safe. `SandboxInvalidCursorError`, `SandboxCursorExpiredError`, and `SandboxUnknownPoolError` are typed protocol errors. A listed sandbox can be released concurrently, so `connect` may still raise `SandboxNotFoundError`; `get` remains available as an equivalent lookup.
+
 The production Kubernetes backend supports these streaming methods. Optional backends without the capability may return `501 STREAMING_NOT_SUPPORTED`; saturated production transfer limits raise `SandboxTransferLimitError` with `TRANSFER_LIMIT_REACHED`.
 
 The SDK does not expose Kubernetes, Pods, CRDs, namespaces, or runtime classes.

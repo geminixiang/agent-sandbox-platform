@@ -61,6 +61,9 @@ type fakeLifecycleBackend struct{ recoverCalls, sweepCalls, closeCalls int }
 func (b *fakeLifecycleBackend) Acquire(context.Context, lease.Scope, lease.AcquireRequest) (lease.AcquireResult, error) {
 	return lease.AcquireResult{}, nil
 }
+func (b *fakeLifecycleBackend) List(context.Context, lease.Scope, lease.ListRequest) (lease.Page, error) {
+	return lease.Page{Leases: []lease.Record{}}, nil
+}
 func (b *fakeLifecycleBackend) Get(context.Context, lease.Scope, string) (lease.Record, error) {
 	return lease.Record{}, nil
 }

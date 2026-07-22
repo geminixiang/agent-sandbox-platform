@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 from collections.abc import AsyncIterator
+from dataclasses import FrozenInstanceError
 from typing import Any, Callable
 
 import httpx
@@ -13,10 +14,14 @@ from agent_sandbox import (
     CommandFailedError,
     SandboxAbortedError,
     SandboxClient,
+    SandboxCursorExpiredError,
     SandboxIntegrityError,
+    SandboxInvalidCursorError,
     SandboxNotFoundError,
+    SandboxPage,
     SandboxStreamingNotSupportedError,
     SandboxTransferLimitError,
+    SandboxUnknownPoolError,
     StaticToken,
 )
 
@@ -264,6 +269,64 @@ async def test_async_credential_provider_and_typed_error() -> None:
             await client.get("missing")
     assert captured.value.code == "LEASE_NOT_FOUND"
     assert captured.value.status == 404
+
+
+@pytest.mark.asyncio
+async def test_list_page_list_and_connect_handle_empty_pages_with_auth() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["authorization"] == "Bearer subject-token"
+        if request.url.path == "/v1/leases" and request.url.params.get("cursor") is None:
+            assert request.url.params["pool"] == "coding"
+            assert request.url.params["limit"] == "1"
+            return response({"leases": [], "nextCursor": "page-2"})
+        if request.url.path == "/v1/leases" and request.url.params.get("cursor") == "page-2":
+            return response({"leases": [RECORD], "nextCursor": None})
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        first = await client.list_page(pool="coding", limit=1)
+        assert isinstance(first, SandboxPage)
+        assert first.sandboxes == ()
+        assert first.next_cursor == "page-2"
+        with pytest.raises(FrozenInstanceError):
+            setattr(first, "next_cursor", None)
+        listed = [sandbox.id async for sandbox in client.list(pool="coding", limit=1)]
+        connected = await client.connect("lease_1")
+
+    assert listed == ["lease_1"]
+    assert connected.id == "lease_1"
+    assert len(requests) == 4
+
+
+@pytest.mark.asyncio
+async def test_list_repeated_cursor_and_typed_errors() -> None:
+    async def repeated_handler(_request: httpx.Request) -> httpx.Response:
+        return response({"leases": [], "nextCursor": "same"})
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("token"), transport=httpx.MockTransport(repeated_handler)) as client:
+        with pytest.raises(SandboxInvalidCursorError) as repeated:
+            _ = [sandbox async for sandbox in client.list(limit=1)]
+    assert repeated.value.code == "INVALID_CURSOR"
+
+    cases = [
+        ("INVALID_CURSOR", 400, SandboxInvalidCursorError),
+        ("CURSOR_EXPIRED", 410, SandboxCursorExpiredError),
+        ("UNKNOWN_POOL", 400, SandboxUnknownPoolError),
+    ]
+    for code, status, error_type in cases:
+        async def error_handler(_request: httpx.Request, *, error_code: str = code, error_status: int = status) -> httpx.Response:
+            return response({"error": {"code": error_code, "message": error_code}}, error_status)
+
+        async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("token"), transport=httpx.MockTransport(error_handler)) as client:
+            with pytest.raises(error_type) as captured:
+                await client.list_page(cursor="opaque")
+        assert captured.value.code == code
+        assert captured.value.status == status
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import inspect
 import re
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import PurePosixPath
 from types import TracebackType
@@ -19,6 +20,7 @@ from ._errors import (
     SandboxAbortedError,
     SandboxError,
     SandboxIntegrityError,
+    SandboxInvalidCursorError,
     SandboxTransferTooLargeError,
     error_from_response,
 )
@@ -79,6 +81,57 @@ class SandboxClient:
         )
         return Sandbox(self, LeaseRecord.from_dict(_dict(payload["lease"])))
 
+    async def list_page(
+        self,
+        *,
+        pool: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> SandboxPage:
+        if isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer between 1 and 100")
+        params: dict[str, str | int] = {"limit": limit}
+        if pool is not None:
+            if not pool.strip():
+                raise ValueError("pool must be a non-empty string")
+            params["pool"] = pool
+        if cursor is not None:
+            if not cursor.strip():
+                raise ValueError("cursor must be a non-empty string")
+            params["cursor"] = cursor
+        payload = await self.request("GET", "v1/leases", params=params)
+        raw_leases_value = payload.get("leases")
+        if not isinstance(raw_leases_value, list):
+            raise SandboxError("sandbox platform returned an invalid list response")
+        raw_leases = cast(list[object], raw_leases_value)
+        next_cursor = payload.get("nextCursor")
+        if next_cursor is not None and (not isinstance(next_cursor, str) or not next_cursor):
+            raise SandboxError("sandbox platform returned an invalid list response")
+        return SandboxPage(
+            sandboxes=tuple(Sandbox(self, LeaseRecord.from_dict(_dict(item))) for item in raw_leases),
+            next_cursor=next_cursor,
+        )
+
+    async def list(self, *, pool: str | None = None, limit: int = 50) -> AsyncIterator[Sandbox]:
+        cursor: str | None = None
+        seen: set[str] = set()
+        while True:
+            page = await self.list_page(pool=pool, limit=limit, cursor=cursor)
+            if page.next_cursor is not None and page.next_cursor in seen:
+                raise SandboxInvalidCursorError(
+                    "sandbox platform returned a repeated list cursor",
+                    code="INVALID_CURSOR",
+                )
+            for sandbox in page.sandboxes:
+                yield sandbox
+            if page.next_cursor is None:
+                return
+            seen.add(page.next_cursor)
+            cursor = page.next_cursor
+
+    async def connect(self, sandbox_id: str) -> Sandbox:
+        return await self.get(sandbox_id)
+
     async def get(self, sandbox_id: str) -> Sandbox:
         payload = await self.request("GET", f"v1/leases/{sandbox_id}")
         return Sandbox(self, LeaseRecord.from_dict(_dict(payload["lease"])))
@@ -106,6 +159,12 @@ class SandboxClient:
             error_payload = _dict(payload.get("error", {}))
             raise error_from_response(status=response.status_code, code=_optional_str(error_payload.get("code")), message=_optional_str(error_payload.get("message")) or f"sandbox platform returned HTTP {response.status_code}")
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxPage:
+    sandboxes: tuple[Sandbox, ...]
+    next_cursor: str | None
 
 
 class SandboxContext:

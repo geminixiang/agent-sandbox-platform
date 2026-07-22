@@ -3,9 +3,12 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   createSubjectToken,
+  SandboxCursorExpiredError,
+  SandboxInvalidCursorError,
   SandboxPlatformClient,
   SandboxPlatformError,
   SandboxPlatformIntegrityError,
+  SandboxUnknownPoolError,
 } from "../src/index.js";
 
 function jsonResponse(body, status = 200) {
@@ -243,6 +246,57 @@ function clientWithFetch(fetch) {
 function contentDigest(sha256) {
   return `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`;
 }
+
+test("lists and connects leases across empty intermediate pages with auth and signal", async () => {
+  const requests = [];
+  const controller = new AbortController();
+  const client = clientWithFetch(async (url, init) => {
+    requests.push({ url: String(url), init });
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v1/leases" && parsed.searchParams.get("cursor") === null) {
+      return jsonResponse({ leases: [], nextCursor: "page-2" });
+    }
+    if (parsed.pathname === "/v1/leases" && parsed.searchParams.get("cursor") === "page-2") {
+      return jsonResponse({ leases: [record], nextCursor: null });
+    }
+    if (parsed.pathname === "/v1/leases/lease_1") return jsonResponse({ lease: record });
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  const listed = [];
+  for await (const lease of client.list({ pool: "local", limit: 1, signal: controller.signal })) {
+    listed.push(lease.id);
+  }
+  const connected = await client.connect("lease_1", { signal: controller.signal });
+  assert.deepEqual(listed, ["lease_1"]);
+  assert.equal(connected.id, "lease_1");
+  assert.equal(requests[0].init.headers.authorization.startsWith("Bearer v1."), true);
+  assert.ok(requests.every(({ init }) => init.signal instanceof AbortSignal));
+});
+
+test("rejects repeated list cursors and maps typed discovery errors", async () => {
+  const repeated = clientWithFetch(async () => jsonResponse({ leases: [], nextCursor: "same" }));
+  await assert.rejects(async () => {
+    for await (const _lease of repeated.list({ limit: 1 })) {
+      // No active leases are expected.
+    }
+  }, (error) => error instanceof SandboxInvalidCursorError && error.code === "INVALID_CURSOR");
+
+  const cases = [
+    ["CURSOR_EXPIRED", 410, SandboxCursorExpiredError],
+    ["UNKNOWN_POOL", 400, SandboxUnknownPoolError],
+    ["INVALID_CURSOR", 400, SandboxInvalidCursorError],
+  ];
+  for (const [code, status, ErrorType] of cases) {
+    const client = clientWithFetch(async () => jsonResponse({ error: { code, message: code } }, status));
+    await assert.rejects(client.listPage({ cursor: "opaque" }), (error) => {
+      assert.ok(error instanceof ErrorType);
+      assert.equal(error.code, code);
+      assert.equal(error.status, status);
+      return true;
+    });
+  }
+});
 
 test("normalizes platform errors", async () => {
   const client = new SandboxPlatformClient({

@@ -65,31 +65,53 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	}
 
 	if request.URL.Path == leasePath {
-		if request.Method != http.MethodPost {
+		switch request.Method {
+		case http.MethodGet:
+			listRequest, parseErr := parseListRequest(request.URL)
+			if parseErr != nil {
+				writeError(response, parseErr)
+				return
+			}
+			page, backendErr := s.backend.List(request.Context(), scope, listRequest)
+			if backendErr != nil {
+				writeError(response, backendErr)
+				return
+			}
+			if page.Leases == nil {
+				page.Leases = []lease.Record{}
+			}
+			writeJSON(response, 200, page)
+			return
+		case http.MethodPost:
+			if request.URL.RawQuery != "" {
+				writeError(response, lease.NewError(400, "INVALID_REQUEST", "Acquire does not accept query parameters"))
+				return
+			}
+			var body lease.AcquireRequest
+			if err = readJSON(request, &body); err != nil {
+				writeError(response, err)
+				return
+			}
+			if strings.TrimSpace(body.Pool) == "" {
+				writeError(response, invalidString("pool"))
+				return
+			}
+			body.IdempotencyKey, err = requiredHeader(request, "Idempotency-Key")
+			if err != nil {
+				writeError(response, err)
+				return
+			}
+			result, backendErr := s.backend.Acquire(request.Context(), scope, body)
+			if backendErr != nil {
+				writeError(response, backendErr)
+				return
+			}
+			writeJSON(response, 201, result)
+			return
+		default:
 			writeError(response, lease.NewError(405, "METHOD_NOT_ALLOWED", "Method not allowed"))
 			return
 		}
-		var body lease.AcquireRequest
-		if err = readJSON(request, &body); err != nil {
-			writeError(response, err)
-			return
-		}
-		if strings.TrimSpace(body.Pool) == "" {
-			writeError(response, invalidString("pool"))
-			return
-		}
-		body.IdempotencyKey, err = requiredHeader(request, "Idempotency-Key")
-		if err != nil {
-			writeError(response, err)
-			return
-		}
-		result, err := s.backend.Acquire(request.Context(), scope, body)
-		if err != nil {
-			writeError(response, err)
-			return
-		}
-		writeJSON(response, 201, result)
-		return
 	}
 
 	id, action, ok := matchLeaseRoute(request.URL.Path)
@@ -335,6 +357,42 @@ func requireEncoding(value string) error {
 }
 func invalidString(field string) error {
 	return lease.NewError(400, "INVALID_REQUEST", "'"+field+"' must be a non-empty string")
+}
+
+func parseListRequest(requestURL *url.URL) (lease.ListRequest, error) {
+	query, err := url.ParseQuery(requestURL.RawQuery)
+	if err != nil {
+		return lease.ListRequest{}, lease.NewError(400, "INVALID_REQUEST", "Invalid list query")
+	}
+	for name, values := range query {
+		if name != "pool" && name != "limit" && name != "cursor" {
+			return lease.ListRequest{}, lease.NewError(400, "INVALID_REQUEST", "Unknown list query parameter")
+		}
+		if len(values) != 1 {
+			return lease.ListRequest{}, lease.NewError(400, "INVALID_REQUEST", "List query parameters must not be repeated")
+		}
+	}
+	result := lease.ListRequest{Limit: lease.DefaultListLimit}
+	if values, ok := query["pool"]; ok {
+		if strings.TrimSpace(values[0]) == "" {
+			return lease.ListRequest{}, invalidString("pool")
+		}
+		result.Pool = values[0]
+	}
+	if values, ok := query["cursor"]; ok {
+		if strings.TrimSpace(values[0]) == "" || len(values[0]) > lease.MaxListCursorBytes {
+			return lease.ListRequest{}, lease.NewError(400, "INVALID_CURSOR", "Invalid list cursor")
+		}
+		result.Cursor = values[0]
+	}
+	if values, ok := query["limit"]; ok {
+		limit, parseErr := strconv.Atoi(values[0])
+		if parseErr != nil || strconv.Itoa(limit) != values[0] || limit < 1 || limit > lease.MaxListLimit {
+			return lease.ListRequest{}, lease.NewError(400, "INVALID_REQUEST", fmt.Sprintf("limit must be an integer between 1 and %d", lease.MaxListLimit))
+		}
+		result.Limit = limit
+	}
+	return result, nil
 }
 
 func requiredFilePath(request *http.Request) (string, error) {

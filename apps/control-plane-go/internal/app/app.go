@@ -45,6 +45,7 @@ type lifecycleBackend interface {
 
 type httpapiBackend interface {
 	Acquire(context.Context, lease.Scope, lease.AcquireRequest) (lease.AcquireResult, error)
+	List(context.Context, lease.Scope, lease.ListRequest) (lease.Page, error)
 	Get(context.Context, lease.Scope, string) (lease.Record, error)
 	Exec(context.Context, lease.Scope, string, lease.ExecRequest) (lease.ExecResult, error)
 	ReadFile(context.Context, lease.Scope, string, lease.ReadFileRequest) (lease.ReadFileResult, error)

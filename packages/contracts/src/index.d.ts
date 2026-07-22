@@ -1,6 +1,8 @@
 export declare const API_VERSION: "v1";
 export declare const LEASE_PATH: "/v1/leases";
 export declare const MAX_JSON_BODY_BYTES: number;
+export declare const DEFAULT_LIST_LIMIT: 50;
+export declare const MAX_LIST_LIMIT: 100;
 export declare const FILE_CONTENT_PATH_SUFFIX: "/files/content";
 export declare const CONTENT_DIGEST_HEADER: "Content-Digest";
 export declare const MAX_FILE_TRANSFER_BYTES: 67108864;
@@ -9,9 +11,15 @@ export declare const LEASE_STATUS: Readonly<{
   RELEASED: "released";
   EXPIRED: "expired";
 }>;
+export declare const LIST_ERROR_CODE: Readonly<{
+  INVALID_CURSOR: "INVALID_CURSOR";
+  CURSOR_EXPIRED: "CURSOR_EXPIRED";
+  UNKNOWN_POOL: "UNKNOWN_POOL";
+}>;
 
 export type LeaseStatus = "active" | "released" | "expired";
 export type FileEncoding = "utf8" | "base64";
+export type ListLeaseErrorCode = "INVALID_CURSOR" | "CURSOR_EXPIRED" | "UNKNOWN_POOL";
 export type FileTransferErrorCode =
   | "ABORTED"
   | "FILE_NOT_FOUND"
@@ -49,6 +57,11 @@ export interface AcquireLeaseRequest {
 export interface AcquireLeaseResponse {
   lease: LeaseRecord;
   replayed: boolean;
+}
+
+export interface ListLeaseResponse {
+  leases: LeaseRecord[];
+  nextCursor: string | null;
 }
 
 export interface ExecRequest {

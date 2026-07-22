@@ -63,7 +63,15 @@ On startup the control plane:
 2. deletes expired Claims,
 3. reconstructs active Lease records for quota accounting and lookup.
 
-Changing `SANDBOX_METADATA_SECRET` makes existing Claims inaccessible to their original Tenant Scope. Treat it as persistent state.
+Changing `SANDBOX_METADATA_SECRET` makes existing Claims inaccessible to their original Tenant Scope and invalidates outstanding discovery cursors. Treat it as persistent state.
+
+## Active discovery and cursors
+
+Discovery lists SandboxClaims with exact server-side labels for `managed=true`, the authenticated Tenant Scope hash, and, when requested, the logical Pool hash. It passes the requested limit and opaque Kubernetes continuation directly to the API server. The backend does not re-sort Claims or fetch extra raw pages to fill pages after active filtering; an empty page with a continuation is therefore expected and safe.
+
+The first page fixes an `asOf` time. Every page excludes Claims with a deletion timestamp or `expiresAt <= asOf`. This stabilizes active evaluation across a traversal without pretending that discovery is a transaction: release can still win a race after a page is returned.
+
+Public cursors are AES-256-GCM envelopes. Their key is deterministically derived from `SANDBOX_METADATA_SECRET` with the `lease-list-cursor/v1` HMAC-SHA256 domain; each cursor uses a random nonce and fixed authenticated data. The encrypted payload binds cursor version, Tenant Scope digest, Pool digest or no-Pool marker, limit, fixed `asOf`, and the raw Kubernetes continuation. No second cursor secret is configured. Cursors survive a control-plane restart with the same metadata secret. Expired Kubernetes continuations map to `CURSOR_EXPIRED`; malformed, tampered, or context-mismatched envelopes map uniformly to `INVALID_CURSOR`.
 
 ## Cleanup
 
@@ -79,4 +87,4 @@ SANDBOX_E2E_KUBECONTEXT=colima-agent-sandbox-gvisor npm run test:e2e:kubernetes
 kubectl --context colima-agent-sandbox-gvisor delete namespace agent-sandbox-platform-e2e
 ```
 
-The test starts the production Go control plane and drives it through the published TypeScript SDK. It verifies acquire, gVisor runtime, exec, files, control-plane restart recovery, release, and cleanup.
+The reusable acceptance harness starts the production Go control plane and drives it through the published TypeScript SDK. It verifies two-Subject isolation, Pool-filtered limit-1 discovery, cross-scope cursor rejection, cursor continuation after a same-secret control-plane restart, connect/exec, files, release, and Claim cleanup.

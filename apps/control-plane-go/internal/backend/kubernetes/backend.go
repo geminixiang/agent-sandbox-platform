@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	posixpath "path"
 	"strings"
@@ -68,6 +69,7 @@ type Backend struct {
 	pods                       podClient
 	runner                     commandRunner
 	transfers                  *transferManager
+	listCursors                listCursorCodec
 	acquireMu                  sync.Mutex
 }
 
@@ -76,6 +78,10 @@ func New(options Options) (*Backend, error) {
 		return nil, fmt.Errorf("namespace is required")
 	}
 	identity, err := newMetadataIdentity(options.MetadataSecret)
+	if err != nil {
+		return nil, err
+	}
+	listCursors, err := newListCursorCodec(identity)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +122,7 @@ func New(options Options) (*Backend, error) {
 	if options.Resources == nil || options.Pods == nil || options.Runner == nil {
 		return nil, fmt.Errorf("Kubernetes clients and command runner are required")
 	}
-	return &Backend{namespace: options.Namespace, identity: identity, pools: pools, defaultTTL: options.DefaultTTLSeconds, maxTTL: options.MaxTTLSeconds, readyTimeout: options.ReadyTimeout, pollInterval: options.PollInterval, now: options.Now, resources: options.Resources, pods: options.Pods, runner: options.Runner, transfers: newTransferManager(options.MaxTransfers, options.MaxTransfersPerLease, options.TransferTimeout)}, nil
+	return &Backend{namespace: options.Namespace, identity: identity, pools: pools, defaultTTL: options.DefaultTTLSeconds, maxTTL: options.MaxTTLSeconds, readyTimeout: options.ReadyTimeout, pollInterval: options.PollInterval, now: options.Now, resources: options.Resources, pods: options.Pods, runner: options.Runner, transfers: newTransferManager(options.MaxTransfers, options.MaxTransfersPerLease, options.TransferTimeout), listCursors: listCursors}, nil
 }
 
 func NewFromConfig(config *rest.Config, options Options) (*Backend, error) {
@@ -178,6 +184,68 @@ func (b *Backend) Acquire(ctx context.Context, scope lease.Scope, request lease.
 		return lease.AcquireResult{}, err
 	}
 	return lease.AcquireResult{Lease: record}, nil
+}
+
+func (b *Backend) List(ctx context.Context, scope lease.Scope, request lease.ListRequest) (lease.Page, error) {
+	if request.Limit < 1 || request.Limit > lease.MaxListLimit {
+		return lease.Page{}, lease.NewError(400, "INVALID_REQUEST", fmt.Sprintf("limit must be an integer between 1 and %d", lease.MaxListLimit))
+	}
+	if request.Pool != "" {
+		if _, ok := b.pools[request.Pool]; !ok {
+			return lease.Page{}, lease.NewError(400, "UNKNOWN_POOL", "Unknown sandbox pool")
+		}
+	}
+
+	asOf := b.now().UTC()
+	continuation := ""
+	if request.Cursor != "" {
+		payload, err := b.listCursors.decode(request.Cursor, scope, request.Pool, request.Limit)
+		if err != nil {
+			return lease.Page{}, err
+		}
+		asOf = time.Unix(0, payload.AsOfUnixNano).UTC()
+		continuation = payload.Continue
+	}
+
+	selector := labels.Set{managedLabel: "true", scopeLabel: b.identity.scopeHash(scope)}
+	if request.Pool != "" {
+		selector[poolHashLabel] = b.identity.poolHash(request.Pool)
+	}
+	claims, err := b.resources.List(ctx, claimResource, b.namespace, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(selector).String(),
+		Limit:         int64(request.Limit),
+		Continue:      continuation,
+	})
+	if err != nil {
+		if continuation != "" && expiredContinuation(err) {
+			return lease.Page{}, lease.NewError(410, "CURSOR_EXPIRED", "List cursor has expired")
+		}
+		return lease.Page{}, fmt.Errorf("list SandboxClaims: %w", err)
+	}
+
+	page := lease.Page{Leases: make([]lease.Record, 0, len(claims.Items))}
+	for index := range claims.Items {
+		claim := &claims.Items[index]
+		if claim.GetDeletionTimestamp() != nil {
+			continue
+		}
+		record, err := recordFromClaim(claim)
+		if err != nil {
+			return lease.Page{}, err
+		}
+		if !record.ExpiresAt.After(asOf) {
+			continue
+		}
+		page.Leases = append(page.Leases, record)
+	}
+	if claims.GetContinue() != "" {
+		next, err := b.listCursors.encode(scope, request.Pool, request.Limit, asOf, claims.GetContinue())
+		if err != nil {
+			return lease.Page{}, err
+		}
+		page.NextCursor = &next
+	}
+	return page, nil
 }
 
 func (b *Backend) Get(ctx context.Context, scope lease.Scope, id string) (lease.Record, error) {
@@ -469,6 +537,14 @@ func (b *Backend) verifyRuntime(ctx context.Context, claim *unstructured.Unstruc
 		return lease.NewError(502, "SANDBOX_CONTAINER_NOT_FOUND", "Sandbox Pod has no container")
 	}
 	return nil
+}
+
+func expiredContinuation(err error) bool {
+	if apierrors.IsResourceExpired(err) {
+		return true
+	}
+	var status apierrors.APIStatus
+	return errors.As(err, &status) && status.Status().Code == 410
 }
 
 func (b *Backend) deleteClaim(ctx context.Context, name string) error {

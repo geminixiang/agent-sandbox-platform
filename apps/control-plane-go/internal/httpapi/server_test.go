@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -213,6 +214,65 @@ func TestStreamingPreflightCrossScopeAndPostCommitFailure(t *testing.T) {
 	}
 }
 
+func TestListHTTPValidatesQueriesAndPreservesEmptyPages(t *testing.T) {
+	base := newFakeBackend()
+	next := "opaque-next"
+	backend := &listBackend{fakeBackend: base, pages: []lease.Page{
+		{Leases: []lease.Record{}, NextCursor: &next},
+		{Leases: []lease.Record{}, NextCursor: nil},
+	}}
+	server := httptest.NewServer(httpapi.New(backend, func(id string) (string, bool) { return secret, id == "mikan" }))
+	t.Cleanup(server.Close)
+	client := contractClient{server.URL, token("mikan", "subject-a", secret)}
+
+	first := client.request(t, http.MethodGet, "/v1/leases?pool=local&limit=1", "", nil, 200)
+	if leases, ok := first["leases"].([]any); !ok || len(leases) != 0 || first["nextCursor"] != next {
+		t.Fatalf("first page = %#v", first)
+	}
+	second := client.request(t, http.MethodGet, "/v1/leases?pool=local&limit=1&cursor="+next, "", nil, 200)
+	if leases, ok := second["leases"].([]any); !ok || len(leases) != 0 || second["nextCursor"] != nil {
+		t.Fatalf("second page = %#v", second)
+	}
+	if len(backend.requests) != 2 || backend.requests[0] != (lease.ListRequest{Pool: "local", Limit: 1}) || backend.requests[1].Cursor != next {
+		t.Fatalf("list requests = %#v", backend.requests)
+	}
+
+	for _, path := range []string{
+		"/v1/leases?limit=0",
+		"/v1/leases?limit=101",
+		"/v1/leases?limit=01",
+		"/v1/leases?limit=1&limit=2",
+		"/v1/leases?pool=",
+		"/v1/leases?operator=true",
+	} {
+		body := client.request(t, http.MethodGet, path, "", nil, 400)
+		if body["error"].(map[string]any)["code"] != "INVALID_REQUEST" {
+			t.Fatalf("%s: body = %#v", path, body)
+		}
+	}
+	for _, path := range []string{"/v1/leases?cursor=", "/v1/leases?cursor=" + strings.Repeat("x", lease.MaxListCursorBytes+1)} {
+		body := client.request(t, http.MethodGet, path, "", nil, 400)
+		if body["error"].(map[string]any)["code"] != "INVALID_CURSOR" {
+			t.Fatalf("%s: body = %#v", path, body)
+		}
+	}
+	body := client.request(t, http.MethodPost, "/v1/leases?limit=1", `{"pool":"local"}`, map[string]string{"Idempotency-Key": "request"}, 400)
+	if body["error"].(map[string]any)["code"] != "INVALID_REQUEST" {
+		t.Fatalf("POST query body = %#v", body)
+	}
+}
+
+func TestListHTTPErrorsRemainTyped(t *testing.T) {
+	backend := &listBackend{fakeBackend: newFakeBackend(), listError: lease.NewError(410, "CURSOR_EXPIRED", "List cursor has expired")}
+	server := httptest.NewServer(httpapi.New(backend, func(id string) (string, bool) { return secret, id == "mikan" }))
+	t.Cleanup(server.Close)
+	client := contractClient{server.URL, token("mikan", "subject-a", secret)}
+	body := client.request(t, http.MethodGet, "/v1/leases?cursor=opaque", "", nil, 410)
+	if body["error"].(map[string]any)["code"] != "CURSOR_EXPIRED" {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
 func TestCrossSubjectAccessIsIndistinguishableFromMissingLease(t *testing.T) {
 	backend := newFakeBackend()
 	t.Cleanup(func() { _ = backend.Close(context.Background()) })
@@ -229,6 +289,23 @@ func TestCrossSubjectAccessIsIndistinguishableFromMissingLease(t *testing.T) {
 			t.Fatalf("resource disclosure: %#v", body)
 		}
 	}
+}
+
+type listBackend struct {
+	*fakeBackend
+	pages     []lease.Page
+	requests  []lease.ListRequest
+	listError error
+}
+
+func (b *listBackend) List(_ context.Context, _ lease.Scope, request lease.ListRequest) (lease.Page, error) {
+	b.requests = append(b.requests, request)
+	if b.listError != nil {
+		return lease.Page{}, b.listError
+	}
+	page := b.pages[0]
+	b.pages = b.pages[1:]
+	return page, nil
 }
 
 type contractClient struct{ baseURL, token string }
@@ -350,6 +427,19 @@ func (b *fakeBackend) Acquire(_ context.Context, scope lease.Scope, request leas
 	b.leases[record.ID] = &fakeLease{record: record, scope: scope, files: make(map[string]string), key: key}
 	b.keys[key] = record.ID
 	return lease.AcquireResult{Lease: record}, nil
+}
+
+func (b *fakeBackend) List(_ context.Context, scope lease.Scope, request lease.ListRequest) (lease.Page, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	records := make([]lease.Record, 0)
+	for _, value := range b.leases {
+		if value.scope == scope && value.record.Status == lease.StatusActive && (request.Pool == "" || value.record.Pool == request.Pool) {
+			records = append(records, value.record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ID < records[j].ID })
+	return lease.Page{Leases: records}, nil
 }
 
 func (b *fakeBackend) Get(_ context.Context, scope lease.Scope, id string) (lease.Record, error) {

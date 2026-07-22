@@ -1,18 +1,21 @@
-from ._client import FileDownload, Sandbox, SandboxClient, SandboxFiles
+from ._client import FileDownload, Sandbox, SandboxClient, SandboxFiles, SandboxPage
 from ._credentials import AsyncTokenProvider, StaticToken, TokenProvider
 from ._errors import (
     CommandFailedError,
     SandboxAbortedError,
     SandboxError,
+    SandboxCursorExpiredError,
     SandboxExpiredError,
     SandboxFileNotFoundError,
     SandboxIntegrityError,
+    SandboxInvalidCursorError,
     SandboxNotFoundError,
     SandboxNotActiveError,
     SandboxQuotaExceededError,
     SandboxStreamingNotSupportedError,
     SandboxTransferLimitError,
     SandboxTransferTooLargeError,
+    SandboxUnknownPoolError,
 )
 from ._models import CommandResult, LeaseRecord
 
@@ -25,17 +28,21 @@ __all__ = [
     "Sandbox",
     "SandboxAbortedError",
     "SandboxClient",
+    "SandboxCursorExpiredError",
     "SandboxError",
     "SandboxExpiredError",
     "SandboxFileNotFoundError",
     "SandboxFiles",
     "SandboxIntegrityError",
+    "SandboxInvalidCursorError",
     "SandboxNotActiveError",
     "SandboxNotFoundError",
+    "SandboxPage",
     "SandboxQuotaExceededError",
     "SandboxStreamingNotSupportedError",
     "SandboxTransferLimitError",
     "SandboxTransferTooLargeError",
+    "SandboxUnknownPoolError",
     "StaticToken",
     "TokenProvider",
 ]

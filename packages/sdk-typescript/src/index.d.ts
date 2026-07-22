@@ -29,6 +29,17 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+export interface ListOptions extends RequestOptions {
+  pool?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface LeasePage {
+  leases: LeaseHandle[];
+  nextCursor: string | null;
+}
+
 export interface AcquireOptions extends RequestOptions {
   idempotencyKey?: string;
 }
@@ -65,6 +76,9 @@ export declare class SandboxPlatformError extends Error {
 }
 
 export declare class SandboxPlatformIntegrityError extends SandboxPlatformError {}
+export declare class SandboxInvalidCursorError extends SandboxPlatformError {}
+export declare class SandboxCursorExpiredError extends SandboxPlatformError {}
+export declare class SandboxUnknownPoolError extends SandboxPlatformError {}
 
 export declare class SandboxPlatformClient {
   constructor(options: SandboxPlatformClientOptions);
@@ -72,6 +86,9 @@ export declare class SandboxPlatformClient {
     request: AcquireLeaseRequest,
     options?: AcquireOptions,
   ): Promise<{ lease: LeaseHandle; replayed: boolean; idempotencyKey: string }>;
+  listPage(options?: ListOptions): Promise<LeasePage>;
+  list(options?: ListOptions): AsyncIterable<LeaseHandle>;
+  connect(id: string, options?: RequestOptions): Promise<LeaseHandle>;
   get(id: string, options?: RequestOptions): Promise<LeaseHandle>;
 }
 

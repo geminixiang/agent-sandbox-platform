@@ -20,6 +20,27 @@ export class SandboxPlatformIntegrityError extends SandboxPlatformError {
   }
 }
 
+export class SandboxInvalidCursorError extends SandboxPlatformError {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "SandboxInvalidCursorError";
+  }
+}
+
+export class SandboxCursorExpiredError extends SandboxPlatformError {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "SandboxCursorExpiredError";
+  }
+}
+
+export class SandboxUnknownPoolError extends SandboxPlatformError {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "SandboxUnknownPoolError";
+  }
+}
+
 export class SandboxPlatformClient {
   constructor(options) {
     this.baseUrl = new URL(options.baseUrl);
@@ -53,6 +74,45 @@ export class SandboxPlatformClient {
       replayed: response.replayed,
       idempotencyKey,
     };
+  }
+
+  async listPage(options = {}) {
+    const limit = options.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError("limit must be an integer between 1 and 100");
+    }
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (options.pool !== undefined) query.set("pool", requireNonEmpty(options.pool, "pool"));
+    if (options.cursor !== undefined) query.set("cursor", requireNonEmpty(options.cursor, "cursor"));
+    const response = await this.request(`${LEASE_PATH}?${query}`, { signal: options.signal });
+    if (!Array.isArray(response.leases) || (response.nextCursor !== null && (typeof response.nextCursor !== "string" || response.nextCursor.length === 0))) {
+      throw new SandboxPlatformError("Sandbox platform returned an invalid list response");
+    }
+    return {
+      leases: response.leases.map((record) => new LeaseHandle(this, record)),
+      nextCursor: response.nextCursor,
+    };
+  }
+
+  async *list(options = {}) {
+    let cursor = options.cursor;
+    const seen = new Set(cursor === undefined ? [] : [cursor]);
+    for (;;) {
+      const page = await this.listPage({ ...options, cursor });
+      if (page.nextCursor !== null && seen.has(page.nextCursor)) {
+        throw new SandboxInvalidCursorError("Sandbox platform returned a repeated list cursor", {
+          code: "INVALID_CURSOR",
+        });
+      }
+      for (const lease of page.leases) yield lease;
+      if (page.nextCursor === null) return;
+      seen.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+  }
+
+  async connect(id, options) {
+    return this.get(id, options);
   }
 
   async get(id, options) {
@@ -393,7 +453,7 @@ async function requestJson({
     const text = await response.text();
     const parsed = text ? JSON.parse(text) : undefined;
     if (!response.ok) {
-      throw new SandboxPlatformError(
+      throw platformError(
         parsed?.error?.message ?? `Sandbox platform returned HTTP ${response.status}`,
         { status: response.status, code: parsed?.error?.code },
       );
@@ -436,10 +496,19 @@ async function platformErrorFromResponse(response) {
   } catch {
     parsed = undefined;
   }
-  return new SandboxPlatformError(
+  return platformError(
     parsed?.error?.message ?? `Sandbox platform returned HTTP ${response.status}`,
     { status: response.status, code: parsed?.error?.code },
   );
+}
+
+function platformError(message, options) {
+  const ErrorType = {
+    INVALID_CURSOR: SandboxInvalidCursorError,
+    CURSOR_EXPIRED: SandboxCursorExpiredError,
+    UNKNOWN_POOL: SandboxUnknownPoolError,
+  }[options.code] ?? SandboxPlatformError;
+  return new ErrorType(message, options);
 }
 
 function parseResponseSize(value) {
@@ -501,6 +570,13 @@ function abortedError(cause) {
     cause,
     code: "ABORTED",
   });
+}
+
+function requireNonEmpty(value, name) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new TypeError(`${name} must be a non-empty string`);
+  }
+  return value;
 }
 
 function requireIdentity(value, name) {

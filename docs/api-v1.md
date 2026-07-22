@@ -20,6 +20,7 @@ JSON request bodies are limited to 1 MiB.
 | --- | --- | --- |
 | `GET` | `/health` | Public liveness check |
 | `POST` | `/v1/leases` | Create a temporary Lease |
+| `GET` | `/v1/leases?pool=...&limit=...&cursor=...` | List active Leases in the caller's Tenant Scope |
 | `GET` | `/v1/leases/:id` | Inspect Lease state |
 | `POST` | `/v1/leases/:id/exec` | Execute through an active Lease |
 | `POST` | `/v1/leases/:id/files/read` | Read UTF-8 or base64 workspace content |
@@ -38,7 +39,24 @@ Creating a Lease requires an `Idempotency-Key` header. Its mapping is scoped to 
 }
 ```
 
-`ttlSeconds` defaults to 900 and is currently capped at 3600 by the backend policy.
+`ttlSeconds` defaults to 900 and is currently capped at 3600 by the backend policy. `POST /v1/leases` accepts no query parameters.
+
+## Active Lease discovery
+
+`GET /v1/leases` lists only active Leases in the authenticated Tenant Scope. `pool` is an optional exact logical-Pool filter. `limit` defaults to 50 and must be from 1 through 100. `cursor` is an opaque continuation returned by the preceding page; query parameters cannot be blank, repeated, or unknown.
+
+```json
+{
+  "leases": [],
+  "nextCursor": "opaque-or-null"
+}
+```
+
+`nextCursor` is always present and is `null` on the final page. An empty `leases` array with a non-null cursor is valid: filtering expired or deleting Claims can empty a raw Kubernetes page, so clients must continue until `nextCursor` is null. Results use Kubernetes' stable list order and are not recency ordered. In particular, `lastUsedAt` is not a recency-safe ordering key.
+
+Active status is evaluated against an `asOf` time fixed by the first page and protected inside every subsequent cursor. A Lease is active when it has no deletion timestamp and `expiresAt > asOf`. Concurrent release can therefore remove a Lease after it was listed; connecting through `GET /v1/leases/:id` may legitimately return `LEASE_NOT_FOUND`.
+
+Cursors are authenticated and encrypted, bind the Tenant Scope, Pool filter, limit, and fixed `asOf`, and are portable across control-plane restarts that retain the same metadata secret. Malformed, tampered, or cross-scope/filter/limit cursors return `400 INVALID_CURSOR`. An expired Kubernetes continuation returns `410 CURSOR_EXPIRED`. An unconfigured logical Pool returns `400 UNKNOWN_POOL` without disclosing operator mappings.
 
 ## Paths
 

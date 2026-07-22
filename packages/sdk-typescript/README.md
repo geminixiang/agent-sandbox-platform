@@ -39,4 +39,18 @@ try {
 
 SHA-256 values at the SDK interface are lowercase 64-character hexadecimal strings. Downloads validate exact length and digest at normal EOF. Breaking iteration calls the iterator's `return()` and closes the response without integrity validation. Uploads use raw async iterables and Node fetch's `duplex: "half"`; neither direction eagerly buffers the full transfer.
 
+Discover active Leases with either a page or an async iterable. The SDK continues across valid empty intermediate pages and rejects a repeated cursor rather than looping forever:
+
+```js
+const page = await client.listPage({ pool: "coding", limit: 50 });
+for (const lease of page.leases) console.log(lease.id);
+
+for await (const lease of client.list({ pool: "coding", limit: 50 })) {
+  const connected = await client.connect(lease.id);
+  console.log((await connected.exec("pwd")).stdout);
+}
+```
+
+`nextCursor` is opaque and is `null` on the final page. Discovery order is not recency order, and `record.lastUsedAt` is not recency-safe. `SandboxInvalidCursorError`, `SandboxCursorExpiredError`, and `SandboxUnknownPoolError` expose the corresponding protocol errors. A listed Lease can be released concurrently, so `connect` may still return `LEASE_NOT_FOUND`; `get` remains available as an equivalent lookup.
+
 The existing `readFile` and `writeFile` convenience methods remain on the legacy JSON endpoints. The production Kubernetes backend implements streaming; optional backends without this capability may return `501 STREAMING_NOT_SUPPORTED`. Saturated production transfer limits return `429 TRANSFER_LIMIT_REACHED` through `SandboxPlatformError`.

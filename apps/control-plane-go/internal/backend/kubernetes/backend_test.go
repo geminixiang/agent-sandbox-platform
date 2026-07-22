@@ -2,7 +2,10 @@ package kubernetes
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/geminixiang/agent-sandbox-platform/apps/control-plane-go/internal/lease"
@@ -20,6 +24,8 @@ type fakeResources struct {
 	claims           map[string]*unstructured.Unstructured
 	deleted          []string
 	listError        error
+	continueError    error
+	listOptions      []metav1.ListOptions
 	warmPoolGetError error
 	warmPoolReady    int64
 }
@@ -51,11 +57,15 @@ func (f *fakeResources) Get(_ context.Context, resource schema.GroupVersionResou
 	return value.DeepCopy(), nil
 }
 func (f *fakeResources) List(_ context.Context, _ schema.GroupVersionResource, _ string, options metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	f.listOptions = append(f.listOptions, options)
 	if f.listError != nil {
 		return nil, f.listError
 	}
-	result := &unstructured.UnstructuredList{}
-	for _, value := range f.claims {
+	if options.Continue != "" && f.continueError != nil {
+		return nil, f.continueError
+	}
+	names := make([]string, 0, len(f.claims))
+	for name, value := range f.claims {
 		matches := true
 		for _, selector := range strings.Split(options.LabelSelector, ",") {
 			parts := strings.SplitN(selector, "=", 2)
@@ -64,8 +74,28 @@ func (f *fakeResources) List(_ context.Context, _ schema.GroupVersionResource, _
 			}
 		}
 		if matches {
-			result.Items = append(result.Items, *value.DeepCopy())
+			names = append(names, name)
 		}
+	}
+	sort.Strings(names)
+	start := 0
+	if options.Continue != "" {
+		var err error
+		start, err = strconv.Atoi(strings.TrimPrefix(options.Continue, "offset:"))
+		if err != nil || start < 0 || start > len(names) {
+			return nil, apierrors.NewResourceExpired("invalid continuation")
+		}
+	}
+	end := len(names)
+	if options.Limit > 0 && start+int(options.Limit) < end {
+		end = start + int(options.Limit)
+	}
+	result := &unstructured.UnstructuredList{}
+	for _, name := range names[start:end] {
+		result.Items = append(result.Items, *f.claims[name].DeepCopy())
+	}
+	if end < len(names) {
+		result.SetContinue(fmt.Sprintf("offset:%d", end))
 	}
 	return result, nil
 }
@@ -282,5 +312,179 @@ func TestRecoveryAndExpirySweepIgnoreDeletingClaims(t *testing.T) {
 	}
 	if resources.claims[expired.Lease.ID] != nil {
 		t.Fatal("expired claim was not deleted")
+	}
+}
+
+func TestListUsesExactTenantPoolSelectorAndStableRawPagination(t *testing.T) {
+	backend, resources := fixture(t, "gvisor")
+	now := time.UnixMilli(1900000000000).UTC()
+	putClaim(resources, backend, testScope(), "a-expired", "coding", now.Add(-time.Hour), now)
+	putClaim(resources, backend, testScope(), "b-active", "coding", now.Add(-time.Minute), now.Add(time.Minute))
+	putClaim(resources, backend, testScope(), "c-deleting", "coding", now.Add(-time.Minute), now.Add(time.Minute))
+	deleting := metav1.NewTime(now)
+	resources.claims["c-deleting"].SetDeletionTimestamp(&deleting)
+	putClaim(resources, backend, lease.Scope{ConsumerID: "consumer-a", SubjectID: "other"}, "d-other-tenant", "coding", now, now.Add(time.Minute))
+	putClaim(resources, backend, testScope(), "e-active", "coding", now, now.Add(time.Minute))
+
+	var got []string
+	cursor := ""
+	emptyPages := 0
+	for {
+		page, err := backend.List(context.Background(), testScope(), lease.ListRequest{Pool: "coding", Limit: 1, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Leases) == 0 {
+			emptyPages++
+		}
+		for _, record := range page.Leases {
+			got = append(got, record.ID)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if strings.Join(got, ",") != "b-active,e-active" || emptyPages != 2 {
+		t.Fatalf("listed IDs = %v, empty pages = %d", got, emptyPages)
+	}
+	expectedSelector := labels.SelectorFromSet(labels.Set{
+		managedLabel:  "true",
+		scopeLabel:    backend.identity.scopeHash(testScope()),
+		poolHashLabel: backend.identity.poolHash("coding"),
+	}).String()
+	for _, options := range resources.listOptions {
+		if options.LabelSelector != expectedSelector || options.Limit != 1 {
+			t.Fatalf("list options = %#v, expected selector %q", options, expectedSelector)
+		}
+	}
+}
+
+func TestListCursorFixesActiveAsOfAcrossPages(t *testing.T) {
+	resources := newFakeResources()
+	clock := time.UnixMilli(1900000000000).UTC()
+	pools := map[string]Pool{"coding": {WarmPoolName: "coding-pool", RuntimeClassName: "gvisor", ContainerName: "shell"}}
+	backend, err := New(Options{
+		Namespace: "platform-test", MetadataSecret: "metadata-secret", Pools: pools,
+		Now: func() time.Time { return clock }, ReadyTimeout: 100 * time.Millisecond, PollInterval: time.Millisecond,
+		Resources: resources, Pods: fakePods{runtimeClass: "gvisor"}, Runner: fakeRunner{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	putClaim(resources, backend, testScope(), "a-expired", "coding", clock.Add(-time.Minute), clock)
+	putClaim(resources, backend, testScope(), "b-was-active", "coding", clock, clock.Add(30*time.Second))
+	first, err := backend.List(context.Background(), testScope(), lease.ListRequest{Limit: 1})
+	if err != nil || len(first.Leases) != 0 || first.NextCursor == nil {
+		t.Fatalf("first page = %#v, error = %v", first, err)
+	}
+	clock = clock.Add(time.Minute)
+	second, err := backend.List(context.Background(), testScope(), lease.ListRequest{Limit: 1, Cursor: *first.NextCursor})
+	if err != nil || len(second.Leases) != 1 || second.Leases[0].ID != "b-was-active" {
+		t.Fatalf("second page = %#v, error = %v", second, err)
+	}
+}
+
+func TestListCursorIsBoundAndSurvivesRestart(t *testing.T) {
+	resources := newFakeResources()
+	pools := map[string]Pool{
+		"coding":   {WarmPoolName: "coding-pool", RuntimeClassName: "gvisor", ContainerName: "shell"},
+		"research": {WarmPoolName: "research-pool", RuntimeClassName: "gvisor", ContainerName: "shell"},
+	}
+	backend := newTestBackend(t, resources, pools, "metadata-secret")
+	now := time.UnixMilli(1900000000000).UTC()
+	putClaim(resources, backend, testScope(), "a", "coding", now, now.Add(time.Minute))
+	putClaim(resources, backend, testScope(), "b", "coding", now, now.Add(time.Minute))
+	page, err := backend.List(context.Background(), testScope(), lease.ListRequest{Pool: "coding", Limit: 1})
+	if err != nil || page.NextCursor == nil {
+		t.Fatalf("first page = %#v, error = %v", page, err)
+	}
+	cursor := *page.NextCursor
+
+	tamperedSuffix := "A"
+	if strings.HasSuffix(cursor, tamperedSuffix) {
+		tamperedSuffix = "B"
+	}
+	invalidRequests := []lease.ListRequest{
+		{Pool: "coding", Limit: 2, Cursor: cursor},
+		{Pool: "research", Limit: 1, Cursor: cursor},
+		{Pool: "coding", Limit: 1, Cursor: cursor[:len(cursor)-1] + tamperedSuffix},
+	}
+	for _, request := range invalidRequests {
+		_, err := backend.List(context.Background(), testScope(), request)
+		assertLeaseErrorCode(t, err, "INVALID_CURSOR")
+	}
+	_, err = backend.List(context.Background(), lease.Scope{ConsumerID: "consumer-a", SubjectID: "other"}, lease.ListRequest{Pool: "coding", Limit: 1, Cursor: cursor})
+	assertLeaseErrorCode(t, err, "INVALID_CURSOR")
+
+	restarted := newTestBackend(t, resources, pools, "metadata-secret")
+	continued, err := restarted.List(context.Background(), testScope(), lease.ListRequest{Pool: "coding", Limit: 1, Cursor: cursor})
+	if err != nil || len(continued.Leases) != 1 || continued.Leases[0].ID != "b" {
+		t.Fatalf("continued page = %#v, error = %v", continued, err)
+	}
+}
+
+func TestListMapsExpiredContinuationAndRejectsUnknownPool(t *testing.T) {
+	backend, resources := fixture(t, "gvisor")
+	now := time.UnixMilli(1900000000000).UTC()
+	putClaim(resources, backend, testScope(), "a", "coding", now, now.Add(time.Minute))
+	putClaim(resources, backend, testScope(), "b", "coding", now, now.Add(time.Minute))
+	page, err := backend.List(context.Background(), testScope(), lease.ListRequest{Limit: 1})
+	if err != nil || page.NextCursor == nil {
+		t.Fatalf("first page = %#v, error = %v", page, err)
+	}
+	resources.continueError = apierrors.NewResourceExpired("too old")
+	_, err = backend.List(context.Background(), testScope(), lease.ListRequest{Limit: 1, Cursor: *page.NextCursor})
+	assertLeaseErrorCode(t, err, "CURSOR_EXPIRED")
+	resources.continueError = apierrors.NewGone("continuation is gone")
+	_, err = backend.List(context.Background(), testScope(), lease.ListRequest{Limit: 1, Cursor: *page.NextCursor})
+	assertLeaseErrorCode(t, err, "CURSOR_EXPIRED")
+	_, err = backend.List(context.Background(), testScope(), lease.ListRequest{Pool: "operator-internal-name", Limit: 1})
+	assertLeaseErrorCode(t, err, "UNKNOWN_POOL")
+	_, _, message := lease.ErrorDetails(err)
+	if message != "Unknown sandbox pool" {
+		t.Fatalf("unknown Pool leaked details: %q", message)
+	}
+}
+
+func TestListedLeaseMayBeReleasedBeforeConnect(t *testing.T) {
+	backend, resources := fixture(t, "gvisor")
+	now := time.UnixMilli(1900000000000).UTC()
+	putClaim(resources, backend, testScope(), "race", "coding", now, now.Add(time.Minute))
+	page, err := backend.List(context.Background(), testScope(), lease.ListRequest{Limit: 50})
+	if err != nil || len(page.Leases) != 1 {
+		t.Fatalf("page = %#v, error = %v", page, err)
+	}
+	if _, err := backend.Release(context.Background(), testScope(), "race"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = backend.Get(context.Background(), testScope(), page.Leases[0].ID)
+	assertLeaseErrorCode(t, err, "LEASE_NOT_FOUND")
+}
+
+func newTestBackend(t *testing.T, resources *fakeResources, pools map[string]Pool, secret string) *Backend {
+	t.Helper()
+	backend, err := New(Options{
+		Namespace: "platform-test", MetadataSecret: secret, Pools: pools,
+		Now:          func() time.Time { return time.UnixMilli(1900000000000) },
+		ReadyTimeout: 100 * time.Millisecond, PollInterval: time.Millisecond,
+		Resources: resources, Pods: fakePods{runtimeClass: "gvisor"}, Runner: fakeRunner{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return backend
+}
+
+func putClaim(resources *fakeResources, backend *Backend, scope lease.Scope, id, pool string, created, expires time.Time) {
+	record := lease.Record{ID: id, Pool: pool, Status: lease.StatusActive, CreatedAt: created, ExpiresAt: expires, LastUsedAt: created}
+	resources.claims[id] = buildClaim(record, scope, id+"-key", backend.pools[pool], backend.identity)
+}
+
+func assertLeaseErrorCode(t *testing.T, err error, expected string) {
+	t.Helper()
+	_, code, _ := lease.ErrorDetails(err)
+	if code != expected {
+		t.Fatalf("error = %v, code = %q, expected %q", err, code, expected)
 	}
 }

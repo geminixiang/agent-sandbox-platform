@@ -60,6 +60,18 @@ class SandboxStreamingNotSupportedError(SandboxError):
     pass
 
 
+class SandboxInvalidCursorError(SandboxError):
+    pass
+
+
+class SandboxCursorExpiredError(SandboxError):
+    pass
+
+
+class SandboxUnknownPoolError(SandboxError):
+    pass
+
+
 _ERROR_TYPES: dict[str, type[SandboxError]] = {
     "LEASE_NOT_FOUND": SandboxNotFoundError,
     "LEASE_NOT_ACTIVE": SandboxNotActiveError,
@@ -72,6 +84,9 @@ _ERROR_TYPES: dict[str, type[SandboxError]] = {
     "CONTENT_DIGEST_MISMATCH": SandboxIntegrityError,
     "INVALID_CONTENT_DIGEST": SandboxIntegrityError,
     "STREAMING_NOT_SUPPORTED": SandboxStreamingNotSupportedError,
+    "INVALID_CURSOR": SandboxInvalidCursorError,
+    "CURSOR_EXPIRED": SandboxCursorExpiredError,
+    "UNKNOWN_POOL": SandboxUnknownPoolError,
 }
 
 

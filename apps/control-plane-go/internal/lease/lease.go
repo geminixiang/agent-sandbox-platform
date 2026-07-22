@@ -10,6 +10,9 @@ import (
 
 const (
 	WorkspacePath        = "/workspace"
+	DefaultListLimit     = 50
+	MaxListLimit         = 100
+	MaxListCursorBytes   = 8 * 1024
 	MaxFileTransferBytes = 64 * 1024 * 1024
 )
 
@@ -44,6 +47,17 @@ type AcquireRequest struct {
 type AcquireResult struct {
 	Lease    Record `json:"lease"`
 	Replayed bool   `json:"replayed"`
+}
+
+type ListRequest struct {
+	Pool   string
+	Limit  int
+	Cursor string
+}
+
+type Page struct {
+	Leases     []Record `json:"leases"`
+	NextCursor *string  `json:"nextCursor"`
 }
 
 type ExecRequest struct {
@@ -102,6 +116,7 @@ type FileTransferBackend interface {
 
 type Backend interface {
 	Acquire(context.Context, Scope, AcquireRequest) (AcquireResult, error)
+	List(context.Context, Scope, ListRequest) (Page, error)
 	Get(context.Context, Scope, string) (Record, error)
 	Exec(context.Context, Scope, string, ExecRequest) (ExecResult, error)
 	ReadFile(context.Context, Scope, string, ReadFileRequest) (ReadFileResult, error)
