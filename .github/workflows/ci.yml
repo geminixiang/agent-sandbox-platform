@@ -31,6 +31,7 @@ jobs:
       - run: npm test
       - run: npm run test:package
       - run: go test ./...
+      - run: ./scripts/check-helm.sh
       - name: Verify pi extension
         working-directory: .pi/extensions/agent-sandbox
         run: |

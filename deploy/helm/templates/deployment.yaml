@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-sandbox-platform.fullname" . }}
+  labels: {{- include "agent-sandbox-platform.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "agent-sandbox-platform.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "agent-sandbox-platform.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "agent-sandbox-platform.fullname" . }}
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: http, containerPort: 8787, protocol: TCP }
+          env:
+            - { name: SANDBOX_ADDRESS, value: "0.0.0.0:8787" }
+            - { name: SANDBOX_K8S_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - name: SANDBOX_METADATA_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: SANDBOX_METADATA_SECRET } }
+            - name: SANDBOX_CONSUMER_SECRETS
+              valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: SANDBOX_CONSUMER_SECRETS } }
+            - name: SANDBOX_K8S_POOLS
+              valueFrom: { configMapKeyRef: { name: {{ include "agent-sandbox-platform.fullname" . }}, key: pools.json } }
+            - { name: SANDBOX_DEFAULT_TTL_SECONDS, value: {{ .Values.controlPlane.defaultTtlSeconds | quote }} }
+            - { name: SANDBOX_MAX_TTL_SECONDS, value: {{ .Values.controlPlane.maxTtlSeconds | quote }} }
+            - { name: SANDBOX_K8S_READY_TIMEOUT, value: {{ .Values.controlPlane.readyTimeout | quote }} }
+            - { name: SANDBOX_K8S_POLL_INTERVAL, value: {{ .Values.controlPlane.pollInterval | quote }} }
+            - { name: SANDBOX_SWEEP_INTERVAL, value: {{ .Values.controlPlane.sweepInterval | quote }} }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 12 }
+          livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}

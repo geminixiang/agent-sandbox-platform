@@ -1,0 +1,55 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/geminixiang/agent-sandbox-control-plane
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Must contain keys SANDBOX_METADATA_SECRET and SANDBOX_CONSUMER_SECRETS.
+existingSecret: agent-sandbox-platform-secrets
+
+preflight:
+  # Helm lookup checks prerequisites against the target cluster. Disable only for offline helm template rendering.
+  enabled: true
+
+service:
+  type: ClusterIP
+  port: 8787
+
+controlPlane:
+  defaultTtlSeconds: 900
+  maxTtlSeconds: 3600
+  readyTimeout: 2m
+  pollInterval: 500ms
+  sweepInterval: 30s
+
+pools:
+  coding:
+    warmPoolName: platform-coding
+    runtimeClassName: gvisor
+    containerName: shell
+    enabled: true
+    replicas: 1
+    image: alpine:3.22
+    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600; done"]
+    workspaceSize: 1Gi
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceSelector: {}

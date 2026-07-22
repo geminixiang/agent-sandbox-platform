@@ -1,0 +1,16 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agent-sandbox-platform.fullname" . }}
+  labels: {{- include "agent-sandbox-platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "agent-sandbox-platform.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector: {{ toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
+      ports:
+        - { port: 8787, protocol: TCP }
+{{- end }}

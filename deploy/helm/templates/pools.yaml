@@ -1,0 +1,50 @@
+{{- range $name, $pool := .Values.pools }}
+{{- if $pool.enabled }}
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: {{ $pool.warmPoolName }}
+  labels: {{- include "agent-sandbox-platform.labels" $ | nindent 4 }}
+spec:
+  podTemplate:
+    spec:
+      runtimeClassName: {{ $pool.runtimeClassName }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: {{ $pool.containerName }}
+          image: {{ $pool.image }}
+          imagePullPolicy: IfNotPresent
+          command: {{ toJson $pool.command }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources: {{ toYaml $pool.resources | nindent 12 }}
+          volumeMounts:
+            - { name: workspace, mountPath: /workspace }
+      {{- with $pool.volumes }}
+      volumes: {{ toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplatesPolicy: Overrides
+  volumeClaimTemplates:
+    - metadata: { name: workspace }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: {{ $pool.workspaceSize }} }
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: {{ $pool.warmPoolName }}
+  labels: {{- include "agent-sandbox-platform.labels" $ | nindent 4 }}
+spec:
+  replicas: {{ $pool.replicas }}
+  sandboxTemplateRef: { name: {{ $pool.warmPoolName }} }
+---
+{{- end }}
+{{- end }}

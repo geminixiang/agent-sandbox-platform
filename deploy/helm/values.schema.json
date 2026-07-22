@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": { "const": 1 },
+    "existingSecret": { "type": "string", "minLength": 1 },
+    "pools": { "type": "object", "minProperties": 1 }
+  },
+  "required": ["replicaCount", "existingSecret", "pools"]
+}

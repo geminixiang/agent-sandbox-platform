@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agent-sandbox-platform.fullname" . }}
+  labels: {{- include "agent-sandbox-platform.labels" . | nindent 4 }}
+data:
+{{- $pools := dict }}
+{{- range $name, $pool := .Values.pools }}
+{{- if $pool.enabled }}
+{{- $_ := set $pools $name (dict "warmPoolName" $pool.warmPoolName "runtimeClassName" $pool.runtimeClassName "containerName" $pool.containerName) }}
+{{- end }}
+{{- end }}
+  pools.json: {{ $pools | toJson | quote }}
