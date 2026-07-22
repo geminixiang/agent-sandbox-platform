@@ -45,7 +45,7 @@ See [`deploy/colima/README.md`](deploy/colima/README.md) for lifecycle and brows
 
 ## Kubernetes backend
 
-See [`docs/kubernetes-backend.md`](docs/kubernetes-backend.md) for requirements, configuration, lifecycle, and the Colima integration test.
+See [`docs/kubernetes-backend.md`](docs/kubernetes-backend.md) for requirements, configuration, lifecycle, and the Colima integration test. Durable cloud and real-cluster evidence is indexed in [`docs/test-reports.md`](docs/test-reports.md).
 
 The chart hard-enforces one replica until distributed acquisition and quota coordination are implemented.
 
