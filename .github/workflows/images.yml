@@ -20,10 +20,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: agent-sandbox-control-plane
-            dockerfile: images/control-plane/Dockerfile
           - image: agent-sandbox-browser
             dockerfile: images/browser/Dockerfile
+            context: images/browser
+          - image: agent-sandbox-control-plane
+            dockerfile: images/control-plane/Dockerfile
+            context: .
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -49,7 +51,7 @@ jobs:
           echo "repository=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}" >>"${GITHUB_OUTPUT}"
       - uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
