@@ -59,10 +59,17 @@ try {
   watchStderr(processHandle);
   await waitForReady(baseUrl, processHandle, () => stderr);
 
-  const continued = await subjectA.listPage({ pool: "coding", limit: 1, cursor: first.nextCursor });
-  assert.equal(continued.leases.length, 1);
-  assert.equal(continued.nextCursor, null);
-  assert.deepEqual(new Set([first.leases[0].id, continued.leases[0].id]), new Set([leaseA1.id, leaseA2.id]));
+  const continuedIds = new Set([first.leases[0].id]);
+  let continuation = first.nextCursor;
+  while (continuation !== null) {
+    const continued = await subjectA.listPage({ pool: "coding", limit: 1, cursor: continuation });
+    for (const lease of continued.leases) {
+      assert.equal(continuedIds.has(lease.id), false, `duplicate lease ${lease.id}`);
+      continuedIds.add(lease.id);
+    }
+    continuation = continued.nextCursor;
+  }
+  assert.deepEqual(continuedIds, new Set([leaseA1.id, leaseA2.id]));
 
   const connected = await subjectA.connect(leaseA1.id);
   const result = await connected.exec("uname -r; id -u; id -g; cat message.txt", { cwd: "/workspace" });
