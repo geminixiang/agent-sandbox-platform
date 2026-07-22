@@ -3,3 +3,7 @@ node_modules/
 .env
 .DS_Store
 coverage/
+.venv/
+__pycache__/
+*.pyc
+packages/sdk-python/dist/
