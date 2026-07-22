@@ -38,6 +38,9 @@ pools:
     image: alpine:3.22
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600; done"]
     workspaceSize: 1Gi
+    podAnnotations: {}
+    nodeSelector: {}
+    tolerations: []
     resources:
       requests: { cpu: 10m, memory: 16Mi }
       limits: { cpu: 500m, memory: 256Mi }

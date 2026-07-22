@@ -20,4 +20,12 @@ grep -q 'kind: Deployment' "${rendered}"
 grep -q 'runAsNonRoot: true' "${rendered}"
 grep -q 'kind: NetworkPolicy' "${rendered}"
 grep -q 'kind: SandboxWarmPool' "${rendered}"
+grep -q 'automountServiceAccountToken: false' "${rendered}"
+
+gke_rendered="$(mktemp)"
+trap 'rm -f "${rendered}" "${gke_rendered}"' EXIT
+helm template platform "${chart}" --namespace agent-sandbox-platform --set preflight.enabled=false --values "${ROOT}/deploy/gke/values-gvisor.yaml" >"${gke_rendered}"
+grep -q 'sandbox.gke.io/runtime: gvisor' "${gke_rendered}"
+grep -q 'kind: SandboxWarmPool' "${gke_rendered}"
+grep -q 'name: platform-browser' "${gke_rendered}"
 echo "Helm chart verification passed"

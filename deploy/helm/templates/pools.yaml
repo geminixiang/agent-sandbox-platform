@@ -7,7 +7,12 @@ metadata:
   labels: {{- include "agent-sandbox-platform.labels" $ | nindent 4 }}
 spec:
   podTemplate:
+    {{- with $pool.podAnnotations }}
+    metadata:
+      annotations: {{ toYaml . | nindent 8 }}
+    {{- end }}
     spec:
+      automountServiceAccountToken: false
       runtimeClassName: {{ $pool.runtimeClassName }}
       securityContext:
         runAsNonRoot: true
@@ -26,6 +31,12 @@ spec:
           resources: {{ toYaml $pool.resources | nindent 12 }}
           volumeMounts:
             - { name: workspace, mountPath: /workspace }
+      {{- with $pool.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $pool.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
       {{- with $pool.volumes }}
       volumes: {{ toYaml . | nindent 8 }}
       {{- end }}
