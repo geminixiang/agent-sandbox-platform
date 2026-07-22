@@ -1,21 +1,42 @@
 # HTTP contract v1
 
-All protected endpoints accept `Authorization: Bearer <token>` and JSON bodies up to 1 MiB.
+## Authentication and Tenant Scope
+
+All protected endpoints require a short-lived HMAC Subject token:
+
+```text
+Authorization: Bearer v1.<claims>.<signature>
+```
+
+The signed claims contain only opaque `consumerId`, `subjectId`, and `exp`. The server resolves the Consumer secret and derives the indivisible Tenant Scope `(Consumer, Subject)` from the verified token. Request bodies cannot declare or override that scope.
+
+A resource outside the caller's Tenant Scope returns exactly the same `404 LEASE_NOT_FOUND` response as an unknown Lease ID.
+
+## Endpoints
+
+JSON request bodies are limited to 1 MiB.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Public liveness check |
-| `POST` | `/v1/sandboxes/acquire` | Create or reuse a ready sandbox by `(pool, key)` |
-| `GET` | `/v1/sandboxes/:id` | Inspect lifecycle state |
-| `POST` | `/v1/sandboxes/:id/exec` | Execute a command |
-| `POST` | `/v1/sandboxes/:id/files/read` | Read UTF-8 or base64 content |
-| `POST` | `/v1/sandboxes/:id/files/write` | Write UTF-8 or base64 content |
-| `POST` | `/v1/sandboxes/:id/release` | End active use without immediate deletion |
-| `DELETE` | `/v1/sandboxes/:id` | Permanently delete the sandbox |
+| `POST` | `/v1/leases` | Create a temporary Lease |
+| `GET` | `/v1/leases/:id` | Inspect Lease state |
+| `POST` | `/v1/leases/:id/exec` | Execute through an active Lease |
+| `POST` | `/v1/leases/:id/files/read` | Read UTF-8 or base64 workspace content |
+| `POST` | `/v1/leases/:id/files/write` | Write UTF-8 or base64 workspace content |
+| `POST` | `/v1/leases/:id/release` | Irreversibly relinquish the Lease |
+| `DELETE` | `/v1/leases/:id` | Permanently delete retained resources |
 
-## Identity
+Creating a Lease requires an `Idempotency-Key` header. Its mapping is scoped to the authenticated `(Consumer, Subject)`.
 
-`key` is supplied by a consumer and should be stable for the desired reuse scope, such as a mikan conversation plus actor. `pool` selects platform capacity policy, not a Kubernetes object directly.
+```json
+{
+  "pool": "coding",
+  "ttlSeconds": 900
+}
+```
+
+`ttlSeconds` defaults to 900 and is currently capped at 3600 by the backend policy.
 
 ## Paths
 
@@ -23,15 +44,13 @@ Consumers see `/workspace`. Backends translate that path into their own storage 
 
 ## Errors
 
-Errors use:
+Errors use stable codes:
 
 ```json
 {
   "error": {
-    "code": "NOT_FOUND",
-    "message": "Sandbox 'sbx_123' does not exist"
+    "code": "LEASE_NOT_FOUND",
+    "message": "Lease not found"
   }
 }
 ```
-
-The code is stable for programmatic handling. The message is diagnostic text.

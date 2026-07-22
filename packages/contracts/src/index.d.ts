@@ -1,31 +1,37 @@
 export declare const API_VERSION: "v1";
-export declare const SANDBOX_PATH: "/v1/sandboxes";
+export declare const LEASE_PATH: "/v1/leases";
 export declare const MAX_JSON_BODY_BYTES: number;
-export declare const SANDBOX_STATUS: Readonly<{
-  READY: "ready";
+export declare const LEASE_STATUS: Readonly<{
+  ACTIVE: "active";
   RELEASED: "released";
+  EXPIRED: "expired";
 }>;
 
-export type SandboxStatus = "ready" | "released";
+export type LeaseStatus = "active" | "released" | "expired";
 export type FileEncoding = "utf8" | "base64";
 
-export interface SandboxRecord {
+export interface TenantScope {
+  consumerId: string;
+  subjectId: string;
+}
+
+export interface LeaseRecord {
   id: string;
-  key: string;
   pool: string;
-  status: SandboxStatus;
+  status: LeaseStatus;
   createdAt: string;
+  expiresAt: string;
   lastUsedAt: string;
 }
 
-export interface AcquireSandboxRequest {
-  key: string;
+export interface AcquireLeaseRequest {
   pool: string;
+  ttlSeconds?: number;
 }
 
-export interface AcquireSandboxResponse {
-  sandbox: SandboxRecord;
-  reused: boolean;
+export interface AcquireLeaseResponse {
+  lease: LeaseRecord;
+  replayed: boolean;
 }
 
 export interface ExecRequest {

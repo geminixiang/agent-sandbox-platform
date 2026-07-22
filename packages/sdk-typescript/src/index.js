@@ -1,4 +1,6 @@
-const SANDBOX_PATH = "/v1/sandboxes";
+import { createHmac, randomUUID } from "node:crypto";
+
+const LEASE_PATH = "/v1/leases";
 
 export class SandboxPlatformError extends Error {
   constructor(message, options = {}) {
@@ -12,35 +14,54 @@ export class SandboxPlatformError extends Error {
 export class SandboxPlatformClient {
   constructor(options) {
     this.baseUrl = new URL(options.baseUrl);
-    this.token = options.token;
+    this.consumerId = requireIdentity(options.consumerId, "consumerId");
+    this.subjectId = requireIdentity(options.subjectId, "subjectId");
+    this.consumerSecret = options.consumerSecret;
+    if (!this.consumerSecret) throw new TypeError("consumerSecret is required");
     this.fetch = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.tokenTtlSeconds = options.tokenTtlSeconds ?? 300;
+    if (
+      !Number.isInteger(this.tokenTtlSeconds) ||
+      this.tokenTtlSeconds <= 0 ||
+      this.tokenTtlSeconds > 300
+    ) {
+      throw new TypeError("tokenTtlSeconds must be an integer between 1 and 300");
+    }
     if (typeof this.fetch !== "function") throw new TypeError("fetch is required");
   }
 
-  async acquire(request, options) {
-    const response = await this.request(`${SANDBOX_PATH}/acquire`, {
+  async acquire(request, options = {}) {
+    const idempotencyKey = options.idempotencyKey ?? randomUUID();
+    const response = await this.request(LEASE_PATH, {
       method: "POST",
+      headers: { "idempotency-key": idempotencyKey },
       body: request,
-      signal: options?.signal,
+      signal: options.signal,
     });
     return {
-      sandbox: new SandboxHandle(this, response.sandbox),
-      reused: response.reused,
+      lease: new LeaseHandle(this, response.lease),
+      replayed: response.replayed,
+      idempotencyKey,
     };
   }
 
   async get(id, options) {
-    const response = await this.request(`${SANDBOX_PATH}/${encodeURIComponent(id)}`, {
+    const response = await this.request(`${LEASE_PATH}/${encodeURIComponent(id)}`, {
       signal: options?.signal,
     });
-    return new SandboxHandle(this, response.sandbox);
+    return new LeaseHandle(this, response.lease);
   }
 
   request(path, options = {}) {
     return requestJson({
       baseUrl: this.baseUrl,
-      token: this.token,
+      token: createSubjectToken({
+        consumerId: this.consumerId,
+        subjectId: this.subjectId,
+        consumerSecret: this.consumerSecret,
+        expiresAt: Math.floor(Date.now() / 1000) + this.tokenTtlSeconds,
+      }),
       fetch: this.fetch,
       timeoutMs: this.timeoutMs,
       path,
@@ -49,7 +70,7 @@ export class SandboxPlatformClient {
   }
 }
 
-export class SandboxHandle {
+export class LeaseHandle {
   constructor(client, record) {
     this.client = client;
     this.record = record;
@@ -66,7 +87,7 @@ export class SandboxHandle {
   }
 
   exec(command, options = {}) {
-    return this.client.request(`${SANDBOX_PATH}/${encodeURIComponent(this.id)}/exec`, {
+    return this.client.request(`${LEASE_PATH}/${encodeURIComponent(this.id)}/exec`, {
       method: "POST",
       body: {
         command,
@@ -80,7 +101,7 @@ export class SandboxHandle {
 
   async readFile(path, options = {}) {
     const response = await this.client.request(
-      `${SANDBOX_PATH}/${encodeURIComponent(this.id)}/files/read`,
+      `${LEASE_PATH}/${encodeURIComponent(this.id)}/files/read`,
       {
         method: "POST",
         body: { path, encoding: options.encoding ?? "utf8" },
@@ -91,7 +112,7 @@ export class SandboxHandle {
   }
 
   writeFile(path, content, options = {}) {
-    return this.client.request(`${SANDBOX_PATH}/${encodeURIComponent(this.id)}/files/write`, {
+    return this.client.request(`${LEASE_PATH}/${encodeURIComponent(this.id)}/files/write`, {
       method: "POST",
       body: { path, content, encoding: options.encoding ?? "utf8" },
       signal: options.signal,
@@ -100,22 +121,45 @@ export class SandboxHandle {
 
   async release(options) {
     const response = await this.client.request(
-      `${SANDBOX_PATH}/${encodeURIComponent(this.id)}/release`,
+      `${LEASE_PATH}/${encodeURIComponent(this.id)}/release`,
       { method: "POST", signal: options?.signal },
     );
-    this.record = response.sandbox;
+    this.record = response.lease;
     return this.record;
   }
 
   async delete(options) {
-    await this.client.request(`${SANDBOX_PATH}/${encodeURIComponent(this.id)}`, {
+    await this.client.request(`${LEASE_PATH}/${encodeURIComponent(this.id)}`, {
       method: "DELETE",
       signal: options?.signal,
     });
   }
 }
 
-async function requestJson({ baseUrl, token, fetch, timeoutMs, path, method = "GET", body, signal }) {
+export function createSubjectToken({ consumerId, subjectId, consumerSecret, expiresAt }) {
+  requireIdentity(consumerId, "consumerId");
+  requireIdentity(subjectId, "subjectId");
+  if (!consumerSecret) throw new TypeError("consumerSecret is required");
+  if (!Number.isInteger(expiresAt)) throw new TypeError("expiresAt must be an integer Unix timestamp");
+  const payload = Buffer.from(JSON.stringify({ consumerId, subjectId, exp: expiresAt })).toString(
+    "base64url",
+  );
+  const signed = `v1.${payload}`;
+  const signature = createHmac("sha256", consumerSecret).update(signed).digest("base64url");
+  return `${signed}.${signature}`;
+}
+
+async function requestJson({
+  baseUrl,
+  token,
+  fetch,
+  timeoutMs,
+  path,
+  method = "GET",
+  headers,
+  body,
+  signal,
+}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error("request timed out")), timeoutMs);
   const abort = () => controller.abort(signal.reason);
@@ -127,8 +171,9 @@ async function requestJson({ baseUrl, token, fetch, timeoutMs, path, method = "G
       method,
       headers: {
         accept: "application/json",
+        authorization: `Bearer ${token}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
@@ -154,4 +199,11 @@ async function requestJson({ baseUrl, token, fetch, timeoutMs, path, method = "G
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
   }
+}
+
+function requireIdentity(value, name) {
+  if (typeof value !== "string" || !value.trim() || value.length > 200) {
+    throw new TypeError(`${name} must be a non-empty string of at most 200 characters`);
+  }
+  return value;
 }

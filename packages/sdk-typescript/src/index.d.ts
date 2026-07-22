@@ -1,35 +1,36 @@
-export type SandboxStatus = "ready" | "released";
+export type LeaseStatus = "active" | "released" | "expired";
 export type FileEncoding = "utf8" | "base64";
 
-export interface SandboxRecord {
+export interface LeaseRecord {
   id: string;
-  key: string;
   pool: string;
-  status: SandboxStatus;
+  status: LeaseStatus;
   createdAt: string;
+  expiresAt: string;
   lastUsedAt: string;
 }
 
-export interface AcquireSandboxRequest {
-  key: string;
+export interface AcquireLeaseRequest {
   pool: string;
-}
-
-export interface ExecResponse {
-  stdout: string;
-  stderr: string;
-  code: number;
+  ttlSeconds?: number;
 }
 
 export interface SandboxPlatformClientOptions {
   baseUrl: string | URL;
-  token?: string;
+  consumerId: string;
+  subjectId: string;
+  consumerSecret: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
+  tokenTtlSeconds?: number;
 }
 
 export interface RequestOptions {
   signal?: AbortSignal;
+}
+
+export interface AcquireOptions extends RequestOptions {
+  idempotencyKey?: string;
 }
 
 export interface ExecOptions extends RequestOptions {
@@ -40,6 +41,12 @@ export interface ExecOptions extends RequestOptions {
 
 export interface FileOptions extends RequestOptions {
   encoding?: FileEncoding;
+}
+
+export interface ExecResponse {
+  stdout: string;
+  stderr: string;
+  code: number;
 }
 
 export declare class SandboxPlatformError extends Error {
@@ -54,19 +61,26 @@ export declare class SandboxPlatformError extends Error {
 export declare class SandboxPlatformClient {
   constructor(options: SandboxPlatformClientOptions);
   acquire(
-    request: AcquireSandboxRequest,
-    options?: RequestOptions,
-  ): Promise<{ sandbox: SandboxHandle; reused: boolean }>;
-  get(id: string, options?: RequestOptions): Promise<SandboxHandle>;
+    request: AcquireLeaseRequest,
+    options?: AcquireOptions,
+  ): Promise<{ lease: LeaseHandle; replayed: boolean; idempotencyKey: string }>;
+  get(id: string, options?: RequestOptions): Promise<LeaseHandle>;
 }
 
-export declare class SandboxHandle {
+export declare class LeaseHandle {
   readonly id: string;
-  record: SandboxRecord;
-  refresh(options?: RequestOptions): Promise<SandboxRecord>;
+  record: LeaseRecord;
+  refresh(options?: RequestOptions): Promise<LeaseRecord>;
   exec(command: string, options?: ExecOptions): Promise<ExecResponse>;
   readFile(path: string, options?: FileOptions): Promise<string>;
   writeFile(path: string, content: string, options?: FileOptions): Promise<unknown>;
-  release(options?: RequestOptions): Promise<SandboxRecord>;
+  release(options?: RequestOptions): Promise<LeaseRecord>;
   delete(options?: RequestOptions): Promise<void>;
 }
+
+export declare function createSubjectToken(options: {
+  consumerId: string;
+  subjectId: string;
+  consumerSecret: string;
+  expiresAt: number;
+}): string;
