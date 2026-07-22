@@ -34,6 +34,30 @@ function client(baseUrl, consumerId, subjectId) {
   });
 }
 
+test("passes a live signal to backend exec instead of Node's already-aborted request signal", async (t) => {
+  let receivedSignal;
+  const backend = {
+    async exec(_scope, _id, _body, signal) {
+      receivedSignal = signal;
+      return { stdout: "", stderr: "", code: 0 };
+    },
+  };
+  const server = createControlPlaneServer({
+    backend,
+    resolveConsumerSecret: (consumerId) => consumers[consumerId],
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const owner = client(`http://127.0.0.1:${address.port}`, "mikan", "subject-a");
+
+  await owner.request("/v1/leases/lease-test/exec", {
+    method: "POST",
+    body: { command: "true" },
+  });
+  assert.ok(receivedSignal instanceof AbortSignal);
+  assert.equal(receivedSignal.aborted, false);
+});
 test("SDK drives the lease lifecycle", async (t) => {
   const { baseUrl } = await startTestServer(t);
   const mikan = client(baseUrl, "mikan", "subject-a");

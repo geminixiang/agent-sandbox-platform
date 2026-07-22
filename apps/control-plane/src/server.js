@@ -38,7 +38,8 @@ export function createControlPlaneServer(options) {
       if (request.method === "POST" && action === "exec") {
         const body = await readJson(request);
         requireString(body.command, "command");
-        return sendJson(response, 200, await backend.exec(scope, id, body, request.signal));
+        const signal = requestAbortSignal(request, response);
+        return sendJson(response, 200, await backend.exec(scope, id, body, signal));
       }
       if (request.method === "POST" && action === "files/read") {
         const body = await readJson(request);
@@ -115,6 +116,17 @@ function requireEncoding(encoding) {
   if (encoding !== undefined && encoding !== "utf8" && encoding !== "base64") {
     throw httpError(400, "INVALID_REQUEST", "'encoding' must be 'utf8' or 'base64'");
   }
+}
+
+function requestAbortSignal(request, response) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.once("aborted", abort);
+  response.once("close", () => {
+    request.off("aborted", abort);
+    if (!response.writableEnded) abort();
+  });
+  return controller.signal;
 }
 
 function sendJson(response, status, body) {
