@@ -1,21 +1,78 @@
 # Colima development environment
 
-The repository includes a disposable Agent Sandbox integration environment in `e2e.yaml`:
+This is the reproducible macOS Golden Path for the production architecture:
 
-- namespace: `agent-sandbox-platform-e2e`
-- RuntimeClass: `gvisor`
-- SandboxTemplate and one-replica WarmPool
-- Alpine runtime container
-- 128 MiB workspace PVC
-
-It assumes the `colima-agent-sandbox-gvisor` cluster already has Agent Sandbox CRDs/controller and the `gvisor` RuntimeClass.
-
-```bash
-kubectl --context colima-agent-sandbox-gvisor apply -f deploy/colima/e2e.yaml
-SANDBOX_E2E_KUBECONTEXT=colima-agent-sandbox-gvisor npm run test:e2e:kubernetes
-kubectl --context colima-agent-sandbox-gvisor delete namespace agent-sandbox-platform-e2e
+```text
+TypeScript SDK → Go control plane → Agent Sandbox → gVisor
 ```
 
-The E2E test starts the production Go control plane and drives it through the TypeScript SDK. It verifies acquire, gVisor execution, workspace files, control-plane restart recovery, release, and cleanup.
+The scripts create an isolated Colima profile named `agent-sandbox-platform`; they do not modify the default profile. The current pins are in [`versions.env`](versions.env).
 
-There is no local process backend. Local development uses the same Kubernetes path as cloud deployments.
+## Requirements
+
+- macOS on Apple Silicon or Intel
+- Colima
+- kubectl
+- curl and OpenSSL
+- Go, Node.js >= 22.19, and npm
+
+Run the preflight check:
+
+```bash
+./scripts/local/preflight.sh
+```
+
+## Install
+
+```bash
+./scripts/local/up.sh
+```
+
+The installer is idempotent and:
+
+1. creates a containerd+k3s Colima profile,
+2. installs pinned, checksum-verified gVisor binaries inside the VM,
+3. configures containerd's `runsc` handler,
+4. installs the `gvisor` RuntimeClass,
+5. installs the pinned Agent Sandbox controller and CRDs with extensions,
+6. applies the local SandboxTemplate and WarmPool.
+
+Run it a second time to verify convergence:
+
+```bash
+./scripts/local/up.sh
+```
+
+## Smoke test
+
+```bash
+./scripts/local/smoke.sh
+```
+
+The smoke test builds and starts the production Go control plane, drives it through the TypeScript SDK, and verifies:
+
+- Lease acquisition,
+- gVisor execution,
+- workspace file write/read,
+- control-plane restart recovery,
+- release and Claim cleanup.
+
+## Cleanup
+
+Remove Platform and Agent Sandbox cluster resources but retain the Colima VM:
+
+```bash
+./scripts/local/down.sh
+```
+
+Delete the entire isolated profile and all its data:
+
+```bash
+./scripts/local/down.sh --delete-profile
+```
+
+Agent Sandbox CRDs are cluster-scoped. `down.sh` removes them only from this dedicated profile; do not point these scripts at a shared cluster.
+
+## Current scope
+
+This phase establishes reproducible local infrastructure. Browser/Chromium images, authenticated CDP routing, and the pi extension are later phases and are intentionally not installed here.
