@@ -32,6 +32,30 @@ list_claims() {
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sort
 }
 
+expected_image_id() {
+  local image="$1"
+  colima ssh --profile "${COLIMA_PROFILE}" -- sudo k3s crictl inspecti "${image}" | jq -r '.status.id'
+}
+
+recycle_warm_pool() {
+  local pool="$1" container="$2" expected="$3"
+  kubectl --context "${context}" -n "${namespace}" patch sandboxwarmpool "${pool}" --type=merge -p '{"spec":{"replicas":0}}' >/dev/null
+  for _ in $(seq 1 180); do
+    [[ "$(kubectl --context "${context}" -n "${namespace}" get sandboxwarmpool "${pool}" -o jsonpath='{.status.replicas}' 2>/dev/null || true)" == "0" ]] && break
+    sleep 1
+  done
+  kubectl --context "${context}" -n "${namespace}" patch sandboxwarmpool "${pool}" --type=merge -p '{"spec":{"replicas":1}}' >/dev/null
+  local ready="" image_id=""
+  for _ in $(seq 1 240); do
+    ready="$(kubectl --context "${context}" -n "${namespace}" get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+    image_id="$(kubectl --context "${context}" -n "${namespace}" get pods -l "agents.x-k8s.io/warm-pool-sandbox" -o json | jq -r --arg container "${container}" '.items[] | select(.metadata.deletionTimestamp == null) | select(.spec.containers[0].name == $container) | .status.containerStatuses[0].imageID' | head -1)"
+    [[ "${ready}" == "1" && "${image_id}" == "${expected}" ]] && return 0
+    sleep 1
+  done
+  echo "ERROR: WarmPool ${pool} did not run expected image ${expected}; got ${image_id:-none}" >&2
+  return 1
+}
+
 cleanup() {
   status=$?
   if [[ ${status} -ne 0 && -f "${log}" ]]; then
@@ -57,6 +81,11 @@ list_claims >"${temp_dir}/claims-before"
 "${SCRIPT_DIR}/build-browser.sh"
 kubectl --context "${context}" apply -f "${REPO_ROOT}/deploy/colima/e2e.yaml" >/dev/null
 kubectl --context "${context}" apply -f "${REPO_ROOT}/deploy/colima/browser.yaml" >/dev/null
+
+expected_coding_image="$(expected_image_id agent-sandbox-coding:local)"
+expected_browser_image="$(expected_image_id agent-sandbox-browser:local)"
+recycle_warm_pool platform-gvisor shell "${expected_coding_image}"
+recycle_warm_pool platform-browser-gvisor browser "${expected_browser_image}"
 
 for pool in platform-gvisor platform-browser-gvisor; do
   ready=""
@@ -131,6 +160,10 @@ jq -Rn '[inputs | select(length > 0)]' <"${temp_dir}/claims-before" >"${temp_dir
 jq -Rn '[inputs | select(length > 0)]' <"${temp_dir}/claims-after" >"${temp_dir}/claims-after.json"
 coding_image="$(kubectl --context "${context}" -n "${namespace}" get pods -l agents.x-k8s.io/warm-pool-sandbox -o json | jq -r '.items[] | select(.spec.containers[0].name=="shell") | .status.containerStatuses[0].imageID' | head -1)"
 browser_image="$(kubectl --context "${context}" -n "${namespace}" get pods -l agents.x-k8s.io/warm-pool-sandbox -o json | jq -r '.items[] | select(.spec.containers[0].name=="browser") | .status.containerStatuses[0].imageID' | head -1)"
+if [[ "${coding_image}" != "${expected_coding_image}" || "${browser_image}" != "${expected_browser_image}" ]]; then
+  echo "ERROR: accepted Pods do not match the images built for this run" >&2
+  exit 1
+fi
 commit="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 report_dir="${REPO_ROOT}/.sandbox-platform/test-reports"
 mkdir -p "${report_dir}"
