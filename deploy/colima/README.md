@@ -93,6 +93,18 @@ The script does not create, stop, or delete a Colima profile. It applies the cod
 
 Secret-free evidence containing the immutable git commit, Kubernetes image IDs, WarmPool readiness, and before/after Claim sets is verified and written under `.sandbox-platform/test-reports/`. The test intentionally omits a raw-TCP short-`Content-Length` probe: framing behavior varies by HTTP client/server connection handling, while the deterministic mismatch contract is covered by control-plane tests. The installed SDK is used for all other transfers; direct `httpx` is limited to the malformed digest contract case.
 
+## Trusted command supervisor prototype gate
+
+Run the isolated Stage 6.0 supervisor gate against the existing pinned profile:
+
+```bash
+./scripts/local/command-supervisor-gate.sh
+```
+
+The script builds the prototype image inside Colima, applies only the dedicated `agent-sandbox-command-supervisor-gate` namespace, claims its gVisor Sandbox, verifies the immutable Pod image ID, runs fresh-`ctl` lifecycle/security/replay tests, restarts the supervisor, and proves exact cleanup. It snapshots every pre-existing WarmPool's `resourceVersion` and `spec` before the run and fails if either changes. Logs, events, and the JSON report are written under the gitignored `.sandbox-platform/test-reports/` directory. The trap never stops or deletes the Colima profile and never changes the existing coding or browser Pools.
+
+This is a non-production feasibility gate, not a supported command-session feature. `blocked` is a valid evidence outcome and exits zero only when all core checks pass but no enabled mechanism contains the new-session descendant observed by the run. The report separately records whether the Pod's own cgroup v2 directory exposes a writable child subtree and `cgroup.kill`; exposed controls do not count as containment because this prototype has no cgroup adapter. Do not wire the prototype into `/v1`, either SDK, Helm defaults, or existing Pools. No gate result is claimed until the script is executed against the real pinned environment.
+
 ## Pi extension environment
 
 Start the complete environment used by the project-local pi extension:

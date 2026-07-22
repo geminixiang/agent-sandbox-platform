@@ -4,17 +4,19 @@ COPY go.mod go.sum ./
 RUN go mod download golang.org/x/sys
 COPY apps/command-supervisor ./apps/command-supervisor
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/agent-sandbox-supervisor ./apps/command-supervisor/cmd/supervisor \
- && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/agent-sandbox-ctl ./apps/command-supervisor/cmd/ctl
+ && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/agent-sandbox-ctl ./apps/command-supervisor/cmd/ctl \
+ && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/agent-sandbox-platform-gate ./apps/command-supervisor/cmd/platform-gate
 
 FROM python:3.13.5-slim-bookworm
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl git jq openssh-client tini \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl git jq openssh-client tini util-linux \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 10001 --shell /bin/bash sandbox \
  && mkdir -p /workspace \
  && chown sandbox:sandbox /workspace
 COPY --from=builder /out/agent-sandbox-supervisor /usr/local/bin/agent-sandbox-supervisor
 COPY --from=builder /out/agent-sandbox-ctl /usr/local/bin/agent-sandbox-ctl
+COPY --from=builder /out/agent-sandbox-platform-gate /usr/local/bin/agent-sandbox-platform-gate
 ENV HOME=/home/sandbox
 USER 0:0
 WORKDIR /workspace

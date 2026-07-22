@@ -39,3 +39,15 @@ Build the prototype only:
 ```sh
 docker build -f images/command-supervisor/Dockerfile -t agent-sandbox-command-supervisor:stage-6.0 .
 ```
+
+## Colima feasibility gate
+
+With the pinned Colima profile already running, execute the isolated gate from the repository root:
+
+```sh
+./scripts/local/command-supervisor-gate.sh
+```
+
+The image includes `agent-sandbox-platform-gate` solely for this test. It drives every lifecycle operation through a fresh `agent-sandbox-ctl` process, directly probes child credentials/capabilities and cgroup exposure, observes how process-group signalling handles a `setsid` descendant, and emits structured evidence. The host script separately verifies supervisor restart recovery, immutable image identity, resource cleanup, and unchanged existing WarmPools. Reports and diagnostics are placed under gitignored `.sandbox-platform/test-reports/`.
+
+This remains a non-production prototype. A `blocked` report exits zero when the core checks passed but no enabled mechanism contained the observed new-session descendant. The gate inspects only the container's current cgroup v2 directory and records writable child-subtree and `cgroup.kill` exposure; this build deliberately enables no cgroup adapter. Any unexpected core, restart, image, cleanup, or invariance failure exits nonzero. Do not use this image as secure production isolation or publish its protocol through `/v1` or an SDK. No outcome is claimed until the real gate is run.
