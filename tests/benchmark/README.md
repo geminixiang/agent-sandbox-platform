@@ -1,5 +1,19 @@
 # Benchmark harness
 
+## Colima baseline
+
+Run a built-wheel local baseline against the pinned Colima+k3s+gVisor environment:
+
+```bash
+./scripts/benchmark/colima.sh
+```
+
+The runner records warm acquisition (only `create()` is timed), WarmPool replenishment, bounded concurrency, coding exec/file operations, and browser milestones. Cleanup and readiness waits occur outside acquire timing. Raw JSON and generated Markdown are written under the gitignored `.sandbox-platform/benchmarks/` directory for review.
+
+Current protocol limits mean raw binary writes are measured through 512 KiB and reads through 7 MiB: base64 expansion reaches the 1 MiB JSON request limit and 10 MiB command-output limit before raw payloads reach those limits.
+
+## Result contract
+
 The benchmark module measures the public SDK path and emits versioned raw JSON plus a Markdown summary. It keeps each `(scenario, pool, cache_state)` in a separate series so warm and cold samples cannot be combined accidentally.
 
 Example:

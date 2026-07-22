@@ -21,7 +21,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: shell
-          image: alpine:3.22
+          image: agent-sandbox-coding:local
+          imagePullPolicy: Never
           command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600; done"]
           securityContext:
             allowPrivilegeEscalation: false

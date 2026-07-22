@@ -65,6 +65,12 @@ class BenchmarkReport:
         return asdict(self)
 
 
+def build_series(spec: SeriesSpec, samples: Sequence[Sample]) -> Series:
+    if len(samples) != spec.samples:
+        raise ValueError(f"expected {spec.samples} samples, received {len(samples)}")
+    return Series(spec=spec, samples=tuple(samples), summary=summarize(samples))
+
+
 async def measure_series(
     spec: SeriesSpec,
     operation: Callable[[], Awaitable[None]],
@@ -85,7 +91,7 @@ async def measure_series(
         else:
             duration = _milliseconds(clock_ns() - started)
             samples.append(Sample(duration_ms=duration, success=True))
-    return Series(spec=spec, samples=tuple(samples), summary=summarize(samples))
+    return build_series(spec, samples)
 
 
 def build_report(metadata: Mapping[str, object], series: Sequence[Series]) -> BenchmarkReport:

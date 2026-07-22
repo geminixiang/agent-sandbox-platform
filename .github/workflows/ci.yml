@@ -32,7 +32,9 @@ jobs:
       - run: npm run test:package
       - run: go test ./...
       - name: Verify benchmark harness
-        run: uv run --with pytest --with pytest-asyncio pytest tests/benchmark
+        env:
+          PYTHONPATH: packages/sdk-python/src
+        run: uv run --with pytest --with pytest-asyncio --with 'httpx>=0.27,<1' pytest tests/benchmark
       - run: ./scripts/check-helm.sh
       - name: Verify pi extension
         working-directory: .pi/extensions/agent-sandbox

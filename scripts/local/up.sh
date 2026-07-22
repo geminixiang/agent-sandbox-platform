@@ -88,6 +88,7 @@ else
 fi
 
 kubectl --context "${context}" apply -f "${REPO_ROOT}/deploy/colima/runtimeclass-gvisor.yaml"
+"${SCRIPT_DIR}/build-coding.sh"
 
 manifest_url="https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/sandbox-with-extensions.yaml"
 installed_image="$(kubectl --context "${context}" -n agent-sandbox-system get deployment agent-sandbox-controller -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
