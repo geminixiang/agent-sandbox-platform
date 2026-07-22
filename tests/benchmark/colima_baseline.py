@@ -50,11 +50,12 @@ async def measure_acquire_series(
 
 
 class Benchmark:
-    def __init__(self, client: SandboxClient, observer_url: str, samples: int, warmups: int) -> None:
+    def __init__(self, client: SandboxClient, observer_url: str, samples: int, warmups: int, concurrency_samples: int) -> None:
         self.client = client
         self.observer_url = observer_url.rstrip("/")
         self.samples = samples
         self.warmups = warmups
+        self.concurrency_samples = concurrency_samples
 
     async def run(self) -> list[Series]:
         series: list[Series] = []
@@ -82,8 +83,8 @@ class Benchmark:
             f"warm-start-acquire-concurrency-{concurrency}",
             pool,
             "warm",
-            self.samples,
-            self.warmups,
+            self.concurrency_samples,
+            min(self.warmups, 1),
         )
         return await measure_acquire_series(
             spec,
@@ -232,12 +233,13 @@ async def main() -> None:
         metadata[key] = value
     samples = int(os.environ.get("SANDBOX_BENCHMARK_SAMPLES", "10"))
     warmups = int(os.environ.get("SANDBOX_BENCHMARK_WARMUPS", "2"))
+    concurrency_samples = int(os.environ.get("SANDBOX_BENCHMARK_CONCURRENCY_SAMPLES", "3"))
     async with SandboxClient(
         base_url=_required("SANDBOX_PLATFORM_URL"),
         credentials=_subject_token,
         timeout=180,
     ) as client:
-        benchmark = Benchmark(client, _required("SANDBOX_BENCHMARK_OBSERVER_URL"), samples, warmups)
+        benchmark = Benchmark(client, _required("SANDBOX_BENCHMARK_OBSERVER_URL"), samples, warmups, concurrency_samples)
         report = build_report(metadata, await benchmark.run())
     output_json.write_text(json.dumps(report.to_dict(), indent=2) + "\n")
     output_markdown.write_text(render_markdown(report))
