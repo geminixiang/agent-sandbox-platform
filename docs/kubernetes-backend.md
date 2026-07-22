@@ -14,8 +14,9 @@ The current quota lock is process-local, so run exactly **one control-plane repl
 
 ## Configuration
 
+The Go control plane is Kubernetes-only and reads the following environment variables:
+
 ```bash
-export SANDBOX_BACKEND=kubernetes
 export SANDBOX_K8S_CONTEXT=colima-agent-sandbox-gvisor
 export SANDBOX_K8S_NAMESPACE=agent-sandbox-platform-e2e
 export SANDBOX_METADATA_SECRET='replace-with-a-stable-random-secret'
@@ -27,11 +28,11 @@ export SANDBOX_K8S_POOLS='{
     "containerName": "shell"
   }
 }'
-export SANDBOX_QUOTA_PER_SCOPE=2
-export SANDBOX_QUOTA_PER_CONSUMER=20
-export SANDBOX_QUOTA_PER_POOL=50
-npm start
+export SANDBOX_SWEEP_INTERVAL=30s
+go run ./apps/control-plane-go/cmd/control-plane
 ```
+
+`SANDBOX_KUBECONFIG` is optional; standard in-cluster configuration and kubeconfig loading are supported. There is no process backend or host-execution fallback.
 
 The Consumer sends only `pool: "coding"`; the WarmPool and RuntimeClass mapping is server-side.
 

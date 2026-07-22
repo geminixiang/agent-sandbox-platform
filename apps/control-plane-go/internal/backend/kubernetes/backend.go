@@ -8,6 +8,7 @@ import (
 	"fmt"
 	posixpath "path"
 	"strings"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,9 +35,9 @@ const (
 )
 
 type Pool struct {
-	WarmPoolName     string
-	RuntimeClassName string
-	ContainerName    string
+	WarmPoolName     string `json:"warmPoolName"`
+	RuntimeClassName string `json:"runtimeClassName"`
+	ContainerName    string `json:"containerName,omitempty"`
 }
 
 type Options struct {
@@ -63,6 +64,7 @@ type Backend struct {
 	resources                  resourceClient
 	pods                       podClient
 	runner                     commandRunner
+	acquireMu                  sync.Mutex
 }
 
 func New(options Options) (*Backend, error) {
@@ -123,6 +125,8 @@ func LoadConfig(kubeconfig, contextName string) (*rest.Config, error) {
 }
 
 func (b *Backend) Acquire(ctx context.Context, scope lease.Scope, request lease.AcquireRequest) (lease.AcquireResult, error) {
+	b.acquireMu.Lock()
+	defer b.acquireMu.Unlock()
 	pool, ok := b.pools[request.Pool]
 	if !ok {
 		return lease.AcquireResult{}, lease.NewError(400, "UNKNOWN_POOL", "Unknown sandbox pool")

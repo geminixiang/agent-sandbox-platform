@@ -33,6 +33,10 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		writeJSON(response, 200, map[string]string{"status": "ok"})
 		return
 	}
+	if request.Method == http.MethodGet && request.URL.Path == "/ready" {
+		writeJSON(response, 200, map[string]string{"status": "ready"})
+		return
+	}
 	scope, err := s.authenticate(request)
 	if err != nil {
 		writeError(response, err)
