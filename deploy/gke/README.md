@@ -66,6 +66,14 @@ The opt-in E2E profile temporarily gives the two Pools DNS plus access to a sing
 
 The script is context-pinned to `agent-sandbox-e2e` and reads local credentials from `.sandbox-platform/gke-e2e.json`. It must not be run against another cluster. The checked-in fixture sends no crawl load to third-party sites; external canaries are limited to one GitHub API request, one shallow clone of GitHub's `octocat/Hello-World`, and `example.com`.
 
+Failure and recovery acceptance verifies typed command timeout, continued use of the same sandbox after cancellation, and the readiness transition when a Pool loses and regains all capacity:
+
+```bash
+./scripts/gke/failure-smoke.sh
+```
+
+Both scripts restore operator policy and Pool capacity from cleanup traps.
+
 ## Verify
 
 ```bash
