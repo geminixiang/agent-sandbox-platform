@@ -1,5 +1,7 @@
 # Kubernetes Agent Sandbox backend
 
+HTTP liveness checks only the process. Readiness traverses the Kubernetes backend, lists Claims, and verifies every configured WarmPool has a ready replica.
+
 The Kubernetes backend maps each Platform Lease to one `SandboxClaim`. Kubernetes resource names, WarmPool names, RuntimeClass values, Pods, and PVCs remain private implementation details.
 
 ## Requirements

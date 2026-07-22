@@ -37,6 +37,7 @@ type lifecycleBackend interface {
 	httpapiBackend
 	Recover(context.Context) ([]kubernetesbackend.ActiveLease, error)
 	SweepExpired(context.Context) error
+	Ready(context.Context) error
 }
 
 type httpapiBackend interface {
@@ -116,7 +117,7 @@ func newWithFactory(config Config, logger *slog.Logger, factory backendFactory) 
 		secret, ok := config.ConsumerSecrets[consumerID]
 		return secret, ok
 	})
-	return &App{server: &http.Server{Addr: config.Address, Handler: httpapi.New(backend, resolver), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}, backend: backend, sweepInterval: config.SweepInterval, logger: logger}, nil
+	return &App{server: &http.Server{Addr: config.Address, Handler: httpapi.New(backend, resolver, backend.Ready), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}, backend: backend, sweepInterval: config.SweepInterval, logger: logger}, nil
 }
 
 func newKubernetesBackend(config Config) (lifecycleBackend, error) {

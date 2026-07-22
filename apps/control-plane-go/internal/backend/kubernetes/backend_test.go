@@ -32,6 +32,9 @@ func (f *fakeResources) Create(_ context.Context, _ schema.GroupVersionResource,
 	return copy.DeepCopy(), nil
 }
 func (f *fakeResources) Get(_ context.Context, resource schema.GroupVersionResource, _ string, name string, _ metav1.GetOptions) (*unstructured.Unstructured, error) {
+	if resource == warmPoolResource {
+		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}, "status": map[string]any{"readyReplicas": int64(1)}}}, nil
+	}
 	if resource == sandboxResource {
 		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name, "annotations": map[string]any{"agents.x-k8s.io/pod-name": name}}, "status": map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}, nil
 	}
@@ -82,6 +85,13 @@ func fixture(t *testing.T, runtimeClass string) (*Backend, *fakeResources) {
 		t.Fatal(err)
 	}
 	return backend, resources
+}
+
+func TestReadyRequiresEveryConfiguredWarmPool(t *testing.T) {
+	backend, _ := fixture(t, "gvisor")
+	if err := backend.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAcquireUsesHashedMetadataAndServerSidePoolMapping(t *testing.T) {

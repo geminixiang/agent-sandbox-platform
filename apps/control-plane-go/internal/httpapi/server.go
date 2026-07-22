@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,14 +19,21 @@ const (
 	maxJSONBodySize = 1024 * 1024
 )
 
+type Readiness func(context.Context) error
+
 type Server struct {
-	backend lease.Backend
-	secrets auth.SecretResolver
-	now     func() time.Time
+	backend   lease.Backend
+	secrets   auth.SecretResolver
+	readiness Readiness
+	now       func() time.Time
 }
 
-func New(backend lease.Backend, secrets auth.SecretResolver) http.Handler {
-	return &Server{backend: backend, secrets: secrets, now: time.Now}
+func New(backend lease.Backend, secrets auth.SecretResolver, readiness ...Readiness) http.Handler {
+	check := Readiness(func(context.Context) error { return nil })
+	if len(readiness) > 0 && readiness[0] != nil {
+		check = readiness[0]
+	}
+	return &Server{backend: backend, secrets: secrets, readiness: check, now: time.Now}
 }
 
 func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -34,6 +42,12 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if request.Method == http.MethodGet && request.URL.Path == "/ready" {
+		ctx, cancel := context.WithTimeout(request.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.readiness(ctx); err != nil {
+			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+			return
+		}
 		writeJSON(response, 200, map[string]string{"status": "ready"})
 		return
 	}

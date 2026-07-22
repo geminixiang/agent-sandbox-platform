@@ -202,6 +202,23 @@ func (b *Backend) Delete(ctx context.Context, scope lease.Scope, id string) erro
 	}
 	return b.deleteClaim(ctx, id)
 }
+func (b *Backend) Ready(ctx context.Context) error {
+	if _, err := b.resources.List(ctx, claimResource, b.namespace, metav1.ListOptions{Limit: 1}); err != nil {
+		return fmt.Errorf("list SandboxClaims: %w", err)
+	}
+	for name, pool := range b.pools {
+		warmPool, err := b.resources.Get(ctx, warmPoolResource, b.namespace, pool.WarmPoolName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get WarmPool for Pool %q: %w", name, err)
+		}
+		ready, found, err := unstructured.NestedInt64(warmPool.Object, "status", "readyReplicas")
+		if err != nil || !found || ready < 1 {
+			return fmt.Errorf("WarmPool %q for Pool %q has no ready replicas", pool.WarmPoolName, name)
+		}
+	}
+	return nil
+}
+
 func (b *Backend) Close(context.Context) error { return nil }
 
 func (b *Backend) Exec(ctx context.Context, scope lease.Scope, id string, request lease.ExecRequest) (lease.ExecResult, error) {

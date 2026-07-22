@@ -74,4 +74,5 @@ func (b *fakeLifecycleBackend) Recover(context.Context) ([]kubernetesbackend.Act
 	b.recoverCalls++
 	return nil, nil
 }
+func (b *fakeLifecycleBackend) Ready(context.Context) error        { return nil }
 func (b *fakeLifecycleBackend) SweepExpired(context.Context) error { b.sweepCalls++; return nil }
