@@ -329,9 +329,9 @@ async function requestFileUpload({ client, path, chunks, sizeBytes, sha256, sign
     }
   } catch (error) {
     if (error instanceof SandboxPlatformError) throw error;
-    if (requestContext.controller.signal.aborted) throw abortedError(error);
-    throw new SandboxPlatformError(`Sandbox platform request failed: ${error.message}`, {
+    throw new SandboxPlatformError("Streaming upload ended before the platform responded", {
       cause: error,
+      code: "ABORTED",
     });
   } finally {
     requestContext.cleanup();

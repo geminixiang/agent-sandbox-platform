@@ -363,9 +363,9 @@ class SandboxFiles:
         except SandboxError:
             raise
         except httpx.TimeoutException as error:
-            raise SandboxAbortedError("sandbox platform request timed out", code="ABORTED") from error
-        except httpx.HTTPError as error:
-            raise SandboxError(f"sandbox platform request failed: {error}") from error
+            raise SandboxAbortedError("streaming upload was aborted", code="ABORTED") from error
+        except httpx.TransportError as error:
+            raise SandboxAbortedError("streaming upload ended before the platform responded", code="ABORTED") from error
         if response.is_error:
             raise _error_from_response(response)
 

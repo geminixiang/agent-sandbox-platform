@@ -11,6 +11,7 @@ import pytest
 
 from agent_sandbox import (
     CommandFailedError,
+    SandboxAbortedError,
     SandboxClient,
     SandboxIntegrityError,
     SandboxNotFoundError,
@@ -165,6 +166,27 @@ async def test_stream_upload_validates_declared_length() -> None:
         with pytest.raises(SandboxIntegrityError) as captured:
             await sandbox.files.write_stream("/workspace/data.bin", chunks(), size_bytes=2, sha256=digest)
     assert captured.value.code == "CONTENT_LENGTH_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_transport_end_is_typed_as_aborted() -> None:
+    content = b"x"
+    digest = hashlib.sha256(content).hexdigest()
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield content
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        await request.aread()
+        raise httpx.ReadError("response ended", request=request)
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        sandbox = await client.get("lease_1")
+        with pytest.raises(SandboxAbortedError) as captured:
+            await sandbox.files.write_stream("/workspace/data.bin", chunks(), size_bytes=1, sha256=digest)
+    assert captured.value.code == "ABORTED"
 
 
 @pytest.mark.asyncio

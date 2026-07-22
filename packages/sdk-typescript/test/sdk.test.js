@@ -198,6 +198,27 @@ test("download truncation and streaming preflight errors are typed", async () =>
   });
 });
 
+test("stream upload maps a transport end to ABORTED", async () => {
+  const client = new SandboxPlatformClient({
+    baseUrl: "https://sandbox.example/",
+    consumerId: "mikan",
+    subjectId: "subject-a",
+    consumerSecret: "secret",
+    fetch: async (url) => {
+      if (String(url).endsWith("/leases/lease_1")) return jsonResponse({ lease: record });
+      throw new TypeError("fetch failed");
+    },
+  });
+  const lease = await client.get("lease_1");
+  await assert.rejects(
+    lease.writeFileStream("/workspace/a", (async function* () { yield new Uint8Array([120]); })(), {
+      sizeBytes: 1,
+      sha256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+    }),
+    (error) => error instanceof SandboxPlatformError && error.code === "ABORTED",
+  );
+});
+
 test("creates verifiable short-lived subject claims without exposing the secret", () => {
   const token = createSubjectToken({
     consumerId: "mikan",
