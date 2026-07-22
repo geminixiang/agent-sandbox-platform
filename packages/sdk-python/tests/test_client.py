@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, Callable
 
 import httpx
 import pytest
 
-from agent_sandbox import CommandFailedError, SandboxClient, SandboxNotFoundError, StaticToken
+from agent_sandbox import (
+    CommandFailedError,
+    SandboxClient,
+    SandboxIntegrityError,
+    SandboxNotFoundError,
+    SandboxStreamingNotSupportedError,
+    StaticToken,
+)
 
 RECORD = {
     "id": "lease_1",
@@ -52,6 +61,156 @@ async def test_context_manager_hides_lease_lifecycle_and_supports_files() -> Non
     assert requests[-1].url.path.endswith("/release")
 
 
+class TrackingStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.yielded = 0
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self.chunks:
+            self.yielded += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_stream_download_is_lazy_and_validates_metadata() -> None:
+    chunks = [b"first-", b"second"]
+    content = b"".join(chunks)
+    digest = hashlib.sha256(content).hexdigest()
+    stream = TrackingStream(chunks)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        assert request.url.path.endswith("/files/content")
+        assert request.url.params["path"] == "/workspace/data.bin"
+        assert request.headers["accept"] == "application/octet-stream"
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(content)),
+                "Content-Digest": content_digest(digest),
+            },
+            stream=stream,
+        )
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        sandbox = await client.get("lease_1")
+        async with sandbox.files.read_stream("/workspace/data.bin") as download:
+            assert download.size_bytes == len(content)
+            assert download.sha256 == digest
+            assert stream.yielded == 0
+            received = [chunk async for chunk in download]
+            assert b"".join(received) == content
+        assert stream.closed
+
+
+class UploadTransport(httpx.AsyncBaseTransport):
+    def __init__(self, generated: Callable[[], int], content: bytes, digest: str) -> None:
+        self.generated = generated
+        self.content = content
+        self.digest = digest
+        self.received = b""
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        assert request.method == "PUT"
+        assert self.generated() == 0
+        assert request.headers["content-type"] == "application/octet-stream"
+        assert request.headers["content-length"] == str(len(self.content))
+        assert request.headers["content-digest"] == content_digest(self.digest)
+        self.received = await request.aread()
+        return httpx.Response(204)
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_is_lazy_and_sends_wire_headers() -> None:
+    content = b"chunk-one|chunk-two"
+    digest = hashlib.sha256(content).hexdigest()
+    generated = 0
+
+    async def chunks() -> AsyncIterator[bytes]:
+        nonlocal generated
+        generated += 1
+        yield content[:9]
+        generated += 1
+        yield content[9:]
+
+    transport = UploadTransport(lambda: generated, content, digest)
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=transport) as client:
+        sandbox = await client.get("lease_1")
+        await sandbox.files.write_stream("/workspace/data.bin", chunks(), size_bytes=len(content), sha256=digest)
+    assert generated == 2
+    assert transport.received == content
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_validates_declared_length() -> None:
+    content = b"x"
+    digest = hashlib.sha256(content).hexdigest()
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield content
+
+    transport = UploadTransport(lambda: 0, b"xx", digest)
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=transport) as client:
+        sandbox = await client.get("lease_1")
+        with pytest.raises(SandboxIntegrityError) as captured:
+            await sandbox.files.write_stream("/workspace/data.bin", chunks(), size_bytes=2, sha256=digest)
+    assert captured.value.code == "CONTENT_LENGTH_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_stream_download_validates_normal_eof_but_early_close_does_not() -> None:
+    digest = hashlib.sha256(b"expected").hexdigest()
+    streams = [TrackingStream([b"short"]), TrackingStream([b"one", b"two"])]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        stream = streams.pop(0)
+        return httpx.Response(200, headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Length": "8",
+            "Content-Digest": content_digest(digest),
+        }, stream=stream)
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        sandbox = await client.get("lease_1")
+        with pytest.raises(SandboxIntegrityError) as captured:
+            async with sandbox.files.read_stream("/workspace/truncated") as download:
+                _ = [chunk async for chunk in download]
+        assert captured.value.code == "CONTENT_LENGTH_MISMATCH"
+
+        early_stream = streams[0]
+        async with sandbox.files.read_stream("/workspace/early") as download:
+            async for _chunk in download:
+                break
+        assert early_stream.closed
+
+
+@pytest.mark.asyncio
+async def test_streaming_not_supported_is_typed() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/leases/lease_1":
+            return response({"lease": RECORD})
+        return response({"error": {"code": "STREAMING_NOT_SUPPORTED", "message": "not supported"}}, 501)
+
+    async with SandboxClient(base_url="https://sandbox.example", credentials=StaticToken("subject-token"), transport=httpx.MockTransport(handler)) as client:
+        sandbox = await client.get("lease_1")
+        with pytest.raises(SandboxStreamingNotSupportedError) as captured:
+            async with sandbox.files.read_stream("/workspace/data.bin"):
+                pass
+    assert captured.value.status == 501
+    assert captured.value.code == "STREAMING_NOT_SUPPORTED"
+
+
 @pytest.mark.asyncio
 async def test_async_credential_provider_and_typed_error() -> None:
     async def credentials() -> str:
@@ -89,6 +248,10 @@ async def test_checked_command_failure_preserves_diagnostics() -> None:
     assert captured.value.code == "COMMAND_FAILED"
     assert captured.value.status is None
     assert str(captured.value) == "command exited with status 17"
+
+
+def content_digest(sha256: str) -> str:
+    return f"sha-256=:{base64.b64encode(bytes.fromhex(sha256)).decode('ascii')}:"
 
 
 def response(body: dict[str, Any], status: int = 200) -> httpx.Response:

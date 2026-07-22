@@ -2,7 +2,9 @@ package lease
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -69,6 +71,30 @@ type WriteFileRequest struct {
 	Path     string `json:"path"`
 	Content  string `json:"content"`
 	Encoding string `json:"encoding,omitempty"`
+}
+
+// FileDownload describes stable content whose size and digest were determined
+// before the HTTP response is committed.
+type FileDownload struct {
+	Content   io.ReadCloser
+	SizeBytes int64
+	SHA256    [sha256.Size]byte
+}
+
+// StreamWriteRequest contains the metadata a streaming backend must verify
+// before atomically replacing the destination file.
+type StreamWriteRequest struct {
+	Path      string
+	SizeBytes int64
+	SHA256    [sha256.Size]byte
+}
+
+// FileTransferBackend is an optional backend capability. Implementations must
+// preflight downloads and atomically verify streamed writes without buffering
+// an entire transfer in the control plane.
+type FileTransferBackend interface {
+	OpenFile(context.Context, Scope, string, string) (FileDownload, error)
+	WriteFileStream(context.Context, Scope, string, StreamWriteRequest, io.Reader) error
 }
 
 type Backend interface {

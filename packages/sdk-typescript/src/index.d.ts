@@ -43,6 +43,12 @@ export interface FileOptions extends RequestOptions {
   encoding?: FileEncoding;
 }
 
+export interface StreamWriteOptions extends RequestOptions {
+  sizeBytes: number;
+  /** Lowercase 64-character SHA-256 hexadecimal digest. */
+  sha256: string;
+}
+
 export interface ExecResponse {
   stdout: string;
   stderr: string;
@@ -58,6 +64,8 @@ export declare class SandboxPlatformError extends Error {
   );
 }
 
+export declare class SandboxPlatformIntegrityError extends SandboxPlatformError {}
+
 export declare class SandboxPlatformClient {
   constructor(options: SandboxPlatformClientOptions);
   acquire(
@@ -67,6 +75,14 @@ export declare class SandboxPlatformClient {
   get(id: string, options?: RequestOptions): Promise<LeaseHandle>;
 }
 
+export declare class FileDownload implements AsyncIterable<Uint8Array> {
+  readonly sizeBytes: number;
+  /** Lowercase 64-character SHA-256 hexadecimal digest. */
+  readonly sha256: string;
+  [Symbol.asyncIterator](): AsyncIterator<Uint8Array>;
+  close(): Promise<void>;
+}
+
 export declare class LeaseHandle {
   readonly id: string;
   record: LeaseRecord;
@@ -74,6 +90,12 @@ export declare class LeaseHandle {
   exec(command: string, options?: ExecOptions): Promise<ExecResponse>;
   readFile(path: string, options?: FileOptions): Promise<string>;
   writeFile(path: string, content: string, options?: FileOptions): Promise<unknown>;
+  readFileStream(path: string, options?: RequestOptions): Promise<FileDownload>;
+  writeFileStream(
+    path: string,
+    chunks: AsyncIterable<Uint8Array>,
+    options: StreamWriteOptions,
+  ): Promise<void>;
   release(options?: RequestOptions): Promise<LeaseRecord>;
   delete(options?: RequestOptions): Promise<void>;
 }

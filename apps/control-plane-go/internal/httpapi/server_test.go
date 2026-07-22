@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -60,6 +61,158 @@ func TestLeaseLifecycleContract(t *testing.T) {
 	client.request(t, http.MethodDelete, "/v1/leases/"+id, "", nil, 204)
 }
 
+func TestStreamingFileContract(t *testing.T) {
+	backend := newFakeBackend()
+	server := httptest.NewServer(httpapi.New(backend, func(id string) (string, bool) { return secret, id == "mikan" }))
+	t.Cleanup(server.Close)
+	client := contractClient{server.URL, token("mikan", "owner", secret)}
+	created := client.request(t, http.MethodPost, "/v1/leases", `{"pool":"local"}`, map[string]string{"Idempotency-Key": "stream-1"}, 201)
+	id := created["lease"].(map[string]any)["id"].(string)
+	content := []byte("first chunk|second chunk")
+	digest := sha256.Sum256(content)
+
+	response := client.rawRequest(t, http.MethodPut, "/v1/leases/"+id+"/files/content?path=%2Fworkspace%2Fdata.bin", bytes.NewReader(content), map[string]string{
+		"Content-Type": "application/octet-stream", "Content-Digest": contentDigest(digest), "Content-Length": fmt.Sprint(len(content)),
+	})
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		payload, _ := io.ReadAll(response.Body)
+		t.Fatalf("PUT status %d: %s", response.StatusCode, payload)
+	}
+
+	response = client.rawRequest(t, http.MethodGet, "/v1/leases/"+id+"/files/content?path=%2Fworkspace%2Fdata.bin", nil, nil)
+	defer response.Body.Close()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != 200 || !bytes.Equal(payload, content) {
+		t.Fatalf("GET status=%d body=%q", response.StatusCode, payload)
+	}
+	if response.Header.Get("Content-Type") != "application/octet-stream" || response.Header.Get("Content-Length") != fmt.Sprint(len(content)) || response.Header.Get("Content-Digest") != contentDigest(digest) {
+		t.Fatalf("unexpected streaming headers: %#v", response.Header)
+	}
+
+	bad := digest
+	bad[0] ^= 0xff
+	response = client.rawRequest(t, http.MethodPut, "/v1/leases/"+id+"/files/content?path=%2Fworkspace%2Fdata.bin", bytes.NewReader([]byte("replacement")), map[string]string{
+		"Content-Type": "application/octet-stream", "Content-Digest": contentDigest(bad), "Content-Length": "11",
+	})
+	defer response.Body.Close()
+	assertErrorResponse(t, response, 422, "CONTENT_DIGEST_MISMATCH")
+	backend.mu.Lock()
+	preserved := backend.leases[id].files["/workspace/data.bin"]
+	backend.mu.Unlock()
+	if preserved != string(content) {
+		t.Fatalf("digest failure replaced destination: %q", preserved)
+	}
+}
+
+func TestStreamingValidationAndUnsupportedBackend(t *testing.T) {
+	backend := newFakeBackend()
+	handler := httpapi.New(backend, func(id string) (string, bool) { return secret, id == "mikan" })
+	client := contractClient{token: token("mikan", "owner", secret)}
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		length  int64
+		status  int
+		code    string
+	}{
+		{"missing length", map[string]string{"Content-Type": "application/octet-stream", "Content-Digest": contentDigest(sha256.Sum256(nil))}, -1, 411, "LENGTH_REQUIRED"},
+		{"media type", map[string]string{"Content-Type": "text/plain", "Content-Digest": contentDigest(sha256.Sum256(nil))}, 0, 415, "UNSUPPORTED_MEDIA_TYPE"},
+		{"digest", map[string]string{"Content-Type": "application/octet-stream", "Content-Digest": "sha-256=:bad:"}, 0, 400, "INVALID_CONTENT_DIGEST"},
+		{"oversize", map[string]string{"Content-Type": "application/octet-stream", "Content-Digest": contentDigest(sha256.Sum256(nil))}, httpapi.MaxFileTransferBytes + 1, 413, "TRANSFER_TOO_LARGE"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPut, "/v1/leases/id/files/content?path=/workspace/a", http.NoBody)
+			request.Header.Set("Authorization", "Bearer "+client.token)
+			for key, value := range test.headers {
+				request.Header.Set(key, value)
+			}
+			request.ContentLength = test.length
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			assertRecordedError(t, recorder.Result(), test.status, test.code)
+		})
+	}
+
+	active, err := backend.Acquire(context.Background(), lease.Scope{ConsumerID: "mikan", SubjectID: "owner"}, lease.AcquireRequest{Pool: "local", IdempotencyKey: "mismatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatch := httptest.NewRequest(http.MethodPut, "/v1/leases/"+active.Lease.ID+"/files/content?path=/workspace/a", strings.NewReader("ab"))
+	mismatch.Header.Set("Authorization", "Bearer "+client.token)
+	mismatch.Header.Set("Content-Type", "application/octet-stream")
+	mismatch.Header.Set("Content-Digest", contentDigest(sha256.Sum256([]byte("ab"))))
+	mismatch.ContentLength = 3
+	mismatchRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(mismatchRecorder, mismatch)
+	assertRecordedError(t, mismatchRecorder.Result(), 400, "CONTENT_LENGTH_MISMATCH")
+
+	legacy := legacyOnlyBackend{Backend: backend}
+	unsupported := httpapi.New(legacy, func(id string) (string, bool) { return secret, id == "mikan" })
+	request := httptest.NewRequest(http.MethodGet, "/v1/leases/id/files/content?path=/workspace/a", nil)
+	request.Header.Set("Authorization", "Bearer "+client.token)
+	recorder := httptest.NewRecorder()
+	unsupported.ServeHTTP(recorder, request)
+	assertRecordedError(t, recorder.Result(), 501, "STREAMING_NOT_SUPPORTED")
+}
+
+func TestStreamingPreflightCrossScopeAndPostCommitFailure(t *testing.T) {
+	backend := newFakeBackend()
+	handler := httpapi.New(backend, func(id string) (string, bool) { return secret, id == "mikan" })
+	owner := contractClient{token: token("mikan", "owner", secret)}
+	attacker := contractClient{token: token("mikan", "attacker", secret)}
+	create := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/leases", strings.NewReader(`{"pool":"local"}`))
+	request.Header.Set("Authorization", "Bearer "+owner.token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "stream-owner")
+	handler.ServeHTTP(create, request)
+	var payload map[string]any
+	_ = json.Unmarshal(create.Body.Bytes(), &payload)
+	id := payload["lease"].(map[string]any)["id"].(string)
+
+	for _, path := range []string{"/v1/leases/" + id + "/files/content?path=/workspace/a", "/v1/leases/missing/files/content?path=/workspace/a"} {
+		for _, method := range []string{http.MethodGet, http.MethodPut} {
+			recorder := httptest.NewRecorder()
+			request = httptest.NewRequest(method, path, http.NoBody)
+			request.Header.Set("Authorization", "Bearer "+attacker.token)
+			if method == http.MethodPut {
+				request.Header.Set("Content-Type", "application/octet-stream")
+				request.Header.Set("Content-Digest", contentDigest(sha256.Sum256(nil)))
+				request.ContentLength = 0
+			}
+			handler.ServeHTTP(recorder, request)
+			assertRecordedError(t, recorder.Result(), 404, "LEASE_NOT_FOUND")
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/v1/leases/"+id+"/files/content?path=/workspace/preflight-error", nil)
+	request.Header.Set("Authorization", "Bearer "+owner.token)
+	handler.ServeHTTP(recorder, request)
+	assertRecordedError(t, recorder.Result(), 404, "FILE_NOT_FOUND")
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/v1/leases/"+id+"/files/content?path=/workspace/reader-error", nil)
+	request.Header.Set("Authorization", "Bearer "+owner.token)
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		handler.ServeHTTP(recorder, request)
+	}()
+	if recovered != http.ErrAbortHandler {
+		t.Fatalf("panic = %#v, want http.ErrAbortHandler", recovered)
+	}
+	if bytes.Contains(recorder.Body.Bytes(), []byte(`{"error"`)) {
+		t.Fatalf("post-commit JSON appended to binary body: %q", recorder.Body.Bytes())
+	}
+}
+
 func TestCrossSubjectAccessIsIndistinguishableFromMissingLease(t *testing.T) {
 	backend := newFakeBackend()
 	t.Cleanup(func() { _ = backend.Close(context.Background()) })
@@ -79,6 +232,23 @@ func TestCrossSubjectAccessIsIndistinguishableFromMissingLease(t *testing.T) {
 }
 
 type contractClient struct{ baseURL, token string }
+
+func (c contractClient) rawRequest(t *testing.T, method, path string, body io.Reader, headers map[string]string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
 
 func (c contractClient) request(t *testing.T, method, path, body string, headers map[string]string, wantStatus int) map[string]any {
 	t.Helper()
@@ -113,6 +283,31 @@ func (c contractClient) request(t *testing.T, method, path, body string, headers
 		t.Fatalf("invalid JSON %q: %v", payload, err)
 	}
 	return value
+}
+
+func assertErrorResponse(t *testing.T, response *http.Response, status int, code string) {
+	t.Helper()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("invalid error JSON %q: %v", payload, err)
+	}
+	if response.StatusCode != status || body["error"].(map[string]any)["code"] != code {
+		t.Fatalf("status=%d body=%s, want %d %s", response.StatusCode, payload, status, code)
+	}
+}
+
+func assertRecordedError(t *testing.T, response *http.Response, status int, code string) {
+	t.Helper()
+	defer response.Body.Close()
+	assertErrorResponse(t, response, status, code)
+}
+
+func contentDigest(digest [sha256.Size]byte) string {
+	return "sha-256=:" + base64.StdEncoding.EncodeToString(digest[:]) + ":"
 }
 
 func token(consumerID, subjectID, signingSecret string) string {
@@ -200,6 +395,73 @@ func (b *fakeBackend) WriteFile(_ context.Context, scope lease.Scope, id string,
 	value.files[request.Path] = request.Content
 	return nil
 }
+
+func (b *fakeBackend) OpenFile(_ context.Context, scope lease.Scope, id, path string) (lease.FileDownload, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value, err := b.requireActive(scope, id)
+	if err != nil {
+		return lease.FileDownload{}, err
+	}
+	if path == "/workspace/preflight-error" {
+		return lease.FileDownload{}, lease.NewError(404, "FILE_NOT_FOUND", "Workspace file not found")
+	}
+	if path == "/workspace/reader-error" {
+		content := []byte("partial binary")
+		return lease.FileDownload{Content: &failingReadCloser{content: content}, SizeBytes: int64(len(content) + 10), SHA256: sha256.Sum256(content)}, nil
+	}
+	content, ok := value.files[path]
+	if !ok {
+		return lease.FileDownload{}, lease.NewError(404, "FILE_NOT_FOUND", "Workspace file not found")
+	}
+	contentBytes := []byte(content)
+	return lease.FileDownload{Content: io.NopCloser(bytes.NewReader(contentBytes)), SizeBytes: int64(len(contentBytes)), SHA256: sha256.Sum256(contentBytes)}, nil
+}
+
+func (b *fakeBackend) WriteFileStream(_ context.Context, scope lease.Scope, id string, request lease.StreamWriteRequest, content io.Reader) error {
+	b.mu.Lock()
+	_, err := b.requireActive(scope, id)
+	b.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	var temporary bytes.Buffer
+	digest := sha256.New()
+	count, err := io.Copy(io.MultiWriter(&temporary, digest), content)
+	if err != nil {
+		return err
+	}
+	if count != request.SizeBytes {
+		return lease.NewError(400, "CONTENT_LENGTH_MISMATCH", "Request body does not match Content-Length")
+	}
+	if !hmac.Equal(digest.Sum(nil), request.SHA256[:]) {
+		return lease.NewError(422, "CONTENT_DIGEST_MISMATCH", "Request body does not match Content-Digest")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value, err := b.requireActive(scope, id)
+	if err != nil {
+		return err
+	}
+	value.files[request.Path] = temporary.String()
+	return nil
+}
+
+type failingReadCloser struct {
+	content []byte
+	done    bool
+}
+
+func (r *failingReadCloser) Read(buffer []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		return copy(buffer, r.content), nil
+	}
+	return 0, fmt.Errorf("injected reader failure")
+}
+func (*failingReadCloser) Close() error { return nil }
+
+type legacyOnlyBackend struct{ lease.Backend }
 
 func (b *fakeBackend) Release(_ context.Context, scope lease.Scope, id string) (lease.Record, error) {
 	b.mu.Lock()

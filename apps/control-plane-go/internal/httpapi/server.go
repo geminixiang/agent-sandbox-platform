@@ -2,11 +2,17 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"hash"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,8 +21,9 @@ import (
 )
 
 const (
-	leasePath       = "/v1/leases"
-	maxJSONBodySize = 1024 * 1024
+	leasePath            = "/v1/leases"
+	maxJSONBodySize      = 1024 * 1024
+	MaxFileTransferBytes = 64 * 1024 * 1024
 )
 
 type Readiness func(context.Context) error
@@ -160,6 +167,10 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 			return
 		}
 		writeJSON(response, 200, map[string]string{"path": body.Path})
+	case request.Method == http.MethodGet && action == "files/content":
+		s.readFileContent(response, request, scope, id)
+	case request.Method == http.MethodPut && action == "files/content":
+		s.writeFileContent(response, request, scope, id)
 	case request.Method == http.MethodPost && action == "release":
 		value, backendErr := s.backend.Release(ctx, scope, id)
 		if backendErr != nil {
@@ -170,6 +181,103 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	default:
 		writeError(response, lease.NewError(405, "METHOD_NOT_ALLOWED", "Method not allowed"))
 	}
+}
+
+func (s *Server) readFileContent(response http.ResponseWriter, request *http.Request, scope lease.Scope, id string) {
+	path, err := requiredFilePath(request)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	backend, ok := s.backend.(lease.FileTransferBackend)
+	if !ok {
+		writeError(response, streamingNotSupported())
+		return
+	}
+	download, err := backend.OpenFile(request.Context(), scope, id, path)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	if download.Content == nil {
+		writeError(response, lease.NewError(500, "INTERNAL_ERROR", "Internal server error"))
+		return
+	}
+	defer download.Content.Close()
+	if download.SizeBytes < 0 {
+		writeError(response, lease.NewError(500, "INTERNAL_ERROR", "Internal server error"))
+		return
+	}
+	if download.SizeBytes > MaxFileTransferBytes {
+		writeError(response, transferTooLarge())
+		return
+	}
+
+	response.Header().Set("Content-Type", "application/octet-stream")
+	response.Header().Set("Content-Length", strconv.FormatInt(download.SizeBytes, 10))
+	response.Header().Set("Content-Digest", formatContentDigest(download.SHA256))
+	response.WriteHeader(http.StatusOK)
+
+	digest := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(response, digest), io.LimitReader(download.Content, download.SizeBytes+1))
+	if copyErr != nil || written != download.SizeBytes || !equalDigest(digest, download.SHA256) {
+		panic(http.ErrAbortHandler)
+	}
+}
+
+func (s *Server) writeFileContent(response http.ResponseWriter, request *http.Request, scope lease.Scope, id string) {
+	path, err := requiredFilePath(request)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	mediaType, _, mediaErr := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if mediaErr != nil || mediaType != "application/octet-stream" {
+		writeError(response, lease.NewError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/octet-stream"))
+		return
+	}
+	if request.ContentLength < 0 {
+		writeError(response, lease.NewError(411, "LENGTH_REQUIRED", "Content-Length is required"))
+		return
+	}
+	if request.ContentLength > MaxFileTransferBytes {
+		writeError(response, transferTooLarge())
+		return
+	}
+	digest, err := parseContentDigest(request.Header.Get("Content-Digest"))
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	backend, ok := s.backend.(lease.FileTransferBackend)
+	if !ok {
+		writeError(response, streamingNotSupported())
+		return
+	}
+
+	limited := http.MaxBytesReader(response, request.Body, request.ContentLength)
+	tracked := &transferReader{reader: limited, digest: sha256.New()}
+	err = backend.WriteFileStream(request.Context(), scope, id, lease.StreamWriteRequest{
+		Path: path, SizeBytes: request.ContentLength, SHA256: digest,
+	}, tracked)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(response, lease.NewError(400, "CONTENT_LENGTH_MISMATCH", "Request body does not match Content-Length"))
+			return
+		}
+		writeError(response, err)
+		return
+	}
+	if tracked.count != request.ContentLength {
+		writeError(response, lease.NewError(400, "CONTENT_LENGTH_MISMATCH", "Request body does not match Content-Length"))
+		return
+	}
+	if !equalDigest(tracked.digest, digest) {
+		writeError(response, lease.NewError(422, "CONTENT_DIGEST_MISMATCH", "Request body does not match Content-Digest"))
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) authenticate(request *http.Request) (lease.Scope, error) {
@@ -229,7 +337,66 @@ func invalidString(field string) error {
 	return lease.NewError(400, "INVALID_REQUEST", "'"+field+"' must be a non-empty string")
 }
 
+func requiredFilePath(request *http.Request) (string, error) {
+	values, ok := request.URL.Query()["path"]
+	if !ok || len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+		return "", invalidString("path")
+	}
+	return values[0], nil
+}
+
+func parseContentDigest(value string) ([sha256.Size]byte, error) {
+	var result [sha256.Size]byte
+	const prefix = "sha-256=:"
+	if !strings.HasPrefix(value, prefix) || !strings.HasSuffix(value, ":") || strings.Count(value, ":") != 2 {
+		return result, lease.NewError(400, "INVALID_CONTENT_DIGEST", "Content-Digest must contain one canonical sha-256 digest")
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(strings.TrimSuffix(strings.TrimPrefix(value, prefix), ":"))
+	if err != nil || len(decoded) != sha256.Size {
+		return result, lease.NewError(400, "INVALID_CONTENT_DIGEST", "Content-Digest must contain one canonical sha-256 digest")
+	}
+	copy(result[:], decoded)
+	if formatContentDigest(result) != value {
+		return [sha256.Size]byte{}, lease.NewError(400, "INVALID_CONTENT_DIGEST", "Content-Digest must contain one canonical sha-256 digest")
+	}
+	return result, nil
+}
+
+func formatContentDigest(value [sha256.Size]byte) string {
+	return fmt.Sprintf("sha-256=:%s:", base64.StdEncoding.EncodeToString(value[:]))
+}
+
+func equalDigest(actual hash.Hash, expected [sha256.Size]byte) bool {
+	return string(actual.Sum(nil)) == string(expected[:])
+}
+
+func streamingNotSupported() error {
+	return lease.NewError(501, "STREAMING_NOT_SUPPORTED", "Streaming file transfer is not supported by this backend")
+}
+
+func transferTooLarge() error {
+	return lease.NewError(413, "TRANSFER_TOO_LARGE", "File transfer exceeds the 64 MiB limit")
+}
+
+type transferReader struct {
+	reader io.Reader
+	digest hash.Hash
+	count  int64
+}
+
+func (r *transferReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	if n > 0 {
+		r.count += int64(n)
+		_, _ = r.digest.Write(buffer[:n])
+	}
+	return n, err
+}
+
 func writeError(response http.ResponseWriter, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		err = lease.NewError(408, "ABORTED", "Request was aborted")
+	}
 	status, code, message := lease.ErrorDetails(err)
 	writeJSON(response, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }

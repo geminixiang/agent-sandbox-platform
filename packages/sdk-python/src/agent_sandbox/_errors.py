@@ -40,11 +40,33 @@ class SandboxAbortedError(SandboxError):
     pass
 
 
+class SandboxFileNotFoundError(SandboxError):
+    pass
+
+
+class SandboxTransferTooLargeError(SandboxError):
+    pass
+
+
+class SandboxIntegrityError(SandboxError):
+    pass
+
+
+class SandboxStreamingNotSupportedError(SandboxError):
+    pass
+
+
 _ERROR_TYPES: dict[str, type[SandboxError]] = {
     "LEASE_NOT_FOUND": SandboxNotFoundError,
     "LEASE_NOT_ACTIVE": SandboxNotActiveError,
     "LEASE_QUOTA_EXCEEDED": SandboxQuotaExceededError,
     "ABORTED": SandboxAbortedError,
+    "FILE_NOT_FOUND": SandboxFileNotFoundError,
+    "TRANSFER_TOO_LARGE": SandboxTransferTooLargeError,
+    "CONTENT_LENGTH_MISMATCH": SandboxIntegrityError,
+    "CONTENT_DIGEST_MISMATCH": SandboxIntegrityError,
+    "INVALID_CONTENT_DIGEST": SandboxIntegrityError,
+    "STREAMING_NOT_SUPPORTED": SandboxStreamingNotSupportedError,
 }
 
 

@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import inspect
+import re
 import uuid
+from collections.abc import AsyncIterable, AsyncIterator
 from datetime import timedelta
 from pathlib import PurePosixPath
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, AsyncContextManager, Self, cast
 
 import httpx
 
 from ._credentials import TokenProvider
-from ._errors import CommandFailedError, SandboxError, error_from_response
+from ._errors import (
+    CommandFailedError,
+    SandboxAbortedError,
+    SandboxError,
+    SandboxIntegrityError,
+    SandboxTransferTooLargeError,
+    error_from_response,
+)
 from ._models import CommandResult, LeaseRecord
 
 
@@ -73,7 +83,7 @@ class SandboxClient:
         payload = await self.request("GET", f"v1/leases/{sandbox_id}")
         return Sandbox(self, LeaseRecord.from_dict(_dict(payload["lease"])))
 
-    async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, object]:
+    async def _authorization_header(self) -> dict[str, str]:
         if self._closed:
             raise RuntimeError("SandboxClient is closed")
         token = self._credentials()
@@ -81,10 +91,14 @@ class SandboxClient:
             token = await token
         if not token.strip():
             raise SandboxError("credential provider returned an empty token")
+        return {"Authorization": f"Bearer {token}"}
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, object]:
+        headers = await self._authorization_header()
         try:
-            response = await self._http.request(method, path, headers={"Authorization": f"Bearer {token}", **kwargs.pop("headers", {})}, **kwargs)
+            response = await self._http.request(method, path, headers={**headers, **kwargs.pop("headers", {})}, **kwargs)
         except httpx.TimeoutException as error:
-            raise SandboxError("sandbox platform request timed out") from error
+            raise SandboxAbortedError("sandbox platform request timed out", code="ABORTED") from error
         except httpx.HTTPError as error:
             raise SandboxError(f"sandbox platform request failed: {error}") from error
         payload = _dict(response.json()) if response.content else {}
@@ -171,6 +185,121 @@ class Sandbox:
             await self.release()
 
 
+_MAX_FILE_TRANSFER_BYTES = 64 * 1024 * 1024
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+_CONTENT_DIGEST = re.compile(r"^sha-256=:([A-Za-z0-9+/]{43}=):$")
+
+
+class FileDownload:
+    def __init__(self, client: SandboxClient, path: str) -> None:
+        self._client = client
+        self._path = path
+        self._stream_context: AsyncContextManager[httpx.Response] | None = None
+        self._response: httpx.Response | None = None
+        self._iterator: AsyncIterator[bytes] | None = None
+        self._iterated = False
+        self._closed = False
+        self._size_bytes: int | None = None
+        self._sha256: str | None = None
+
+    @property
+    def size_bytes(self) -> int:
+        if self._size_bytes is None:
+            raise RuntimeError("FileDownload has not been entered")
+        return self._size_bytes
+
+    @property
+    def sha256(self) -> str:
+        if self._sha256 is None:
+            raise RuntimeError("FileDownload has not been entered")
+        return self._sha256
+
+    async def __aenter__(self) -> Self:
+        if self._stream_context is not None:
+            raise RuntimeError("FileDownload cannot be entered more than once")
+        headers = await self._client._authorization_header()  # pyright: ignore[reportPrivateUsage]
+        stream_context = self._client._http.stream(  # pyright: ignore[reportPrivateUsage]
+            "GET", self._path, headers={**headers, "Accept": "application/octet-stream"}
+        )
+        self._stream_context = stream_context
+        try:
+            response = await stream_context.__aenter__()
+        except httpx.TimeoutException as error:
+            self._stream_context = None
+            self._closed = True
+            raise SandboxAbortedError("sandbox platform request timed out", code="ABORTED") from error
+        except httpx.HTTPError as error:
+            self._stream_context = None
+            self._closed = True
+            raise SandboxError(f"sandbox platform request failed: {error}") from error
+        self._response = response
+        try:
+            if response.is_error:
+                await response.aread()
+                raise _error_from_response(response)
+            self._size_bytes = _parse_content_length(response.headers.get("Content-Length"))
+            self._sha256 = _parse_content_digest(response.headers.get("Content-Digest"))
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
+            if content_type != "application/octet-stream":
+                raise SandboxIntegrityError("sandbox platform returned invalid streaming metadata", code="INVALID_STREAMING_RESPONSE")
+            self._iterator = response.aiter_raw()
+        except SandboxError:
+            await self.close()
+            raise
+        except httpx.TimeoutException as error:
+            await self.close()
+            raise SandboxAbortedError("sandbox platform request timed out", code="ABORTED") from error
+        except httpx.HTTPError as error:
+            await self.close()
+            raise SandboxError(f"sandbox platform request failed: {error}") from error
+        except BaseException:
+            await self.close()
+            raise
+        return self
+
+    async def __aexit__(self, _type: type[BaseException] | None, _value: BaseException | None, _traceback: TracebackType | None) -> None:
+        await self.close()
+
+    def __aiter__(self) -> AsyncIterator[bytes]:
+        if self._iterator is None:
+            raise RuntimeError("FileDownload must be used as an async context manager")
+        if self._iterated:
+            raise RuntimeError("FileDownload can only be iterated once")
+        self._iterated = True
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[bytes]:
+        iterator = self._iterator
+        if iterator is None:
+            raise RuntimeError("FileDownload must be used as an async context manager")
+        digest = hashlib.sha256()
+        received = 0
+        try:
+            async for chunk in iterator:
+                received += len(chunk)
+                if received > self.size_bytes or received > _MAX_FILE_TRANSFER_BYTES:
+                    raise SandboxIntegrityError("streaming download length does not match Content-Length", code="CONTENT_LENGTH_MISMATCH")
+                digest.update(chunk)
+                yield chunk
+        except httpx.TimeoutException as error:
+            raise SandboxAbortedError("sandbox platform request timed out", code="ABORTED") from error
+        except httpx.HTTPError as error:
+            raise SandboxIntegrityError("streaming download ended before normal EOF", code="CONTENT_LENGTH_MISMATCH") from error
+        if received != self.size_bytes:
+            raise SandboxIntegrityError("streaming download length does not match Content-Length", code="CONTENT_LENGTH_MISMATCH")
+        if digest.hexdigest() != self.sha256:
+            raise SandboxIntegrityError("streaming download does not match Content-Digest", code="CONTENT_DIGEST_MISMATCH")
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        stream_context = self._stream_context
+        self._stream_context = None
+        if stream_context is not None:
+            await stream_context.__aexit__(None, None, None)
+
+
 class SandboxFiles:
     def __init__(self, sandbox: Sandbox) -> None:
         self._sandbox = sandbox
@@ -187,12 +316,118 @@ class SandboxFiles:
     async def read_bytes(self, path: str | PurePosixPath) -> bytes:
         return base64.b64decode(await self._read(path, "base64"), validate=True)
 
+    def read_stream(self, path: str | PurePosixPath) -> FileDownload:
+        query = httpx.QueryParams({"path": str(path)})
+        return FileDownload(self._sandbox.client, f"v1/leases/{self._sandbox.id}/files/content?{query}")
+
+    async def write_stream(
+        self,
+        path: str | PurePosixPath,
+        chunks: AsyncIterable[bytes],
+        *,
+        size_bytes: int,
+        sha256: str,
+    ) -> None:
+        size_bytes = _require_transfer_size(size_bytes)
+        sha256 = _require_sha256(sha256)
+        headers = await self._sandbox.client._authorization_header()  # pyright: ignore[reportPrivateUsage]
+
+        async def verified_chunks() -> AsyncIterator[bytes]:
+            digest = hashlib.sha256()
+            sent = 0
+            async for chunk in chunks:
+                sent += len(chunk)
+                if sent > size_bytes or sent > _MAX_FILE_TRANSFER_BYTES:
+                    raise SandboxIntegrityError("streaming upload length does not match size_bytes", code="CONTENT_LENGTH_MISMATCH")
+                digest.update(chunk)
+                yield chunk
+            if sent != size_bytes:
+                raise SandboxIntegrityError("streaming upload length does not match size_bytes", code="CONTENT_LENGTH_MISMATCH")
+            if digest.hexdigest() != sha256:
+                raise SandboxIntegrityError("streaming upload does not match sha256", code="CONTENT_DIGEST_MISMATCH")
+
+        query = httpx.QueryParams({"path": str(path)})
+        try:
+            response = await self._sandbox.client._http.request(  # pyright: ignore[reportPrivateUsage]
+                "PUT",
+                f"v1/leases/{self._sandbox.id}/files/content?{query}",
+                headers={
+                    **headers,
+                    "Accept": "application/json",
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(size_bytes),
+                    "Content-Digest": _format_content_digest(sha256),
+                },
+                content=verified_chunks(),
+            )
+        except SandboxError:
+            raise
+        except httpx.TimeoutException as error:
+            raise SandboxAbortedError("sandbox platform request timed out", code="ABORTED") from error
+        except httpx.HTTPError as error:
+            raise SandboxError(f"sandbox platform request failed: {error}") from error
+        if response.is_error:
+            raise _error_from_response(response)
+
     async def _write(self, path: str | PurePosixPath, content: str, encoding: str) -> None:
         await self._sandbox.client.request("POST", f"v1/leases/{self._sandbox.id}/files/write", json={"path": str(path), "content": content, "encoding": encoding})
 
     async def _read(self, path: str | PurePosixPath, encoding: str) -> str:
         payload = await self._sandbox.client.request("POST", f"v1/leases/{self._sandbox.id}/files/read", json={"path": str(path), "encoding": encoding})
         return str(payload["content"])
+
+
+def _require_transfer_size(value: int) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError("size_bytes must be a non-negative integer")
+    if value > _MAX_FILE_TRANSFER_BYTES:
+        raise SandboxTransferTooLargeError("file transfer exceeds the 64 MiB limit", code="TRANSFER_TOO_LARGE")
+    return value
+
+
+def _require_sha256(value: str) -> str:
+    if not _SHA256_HEX.fullmatch(value):
+        raise ValueError("sha256 must be a lowercase 64-character hexadecimal digest")
+    return value
+
+
+def _format_content_digest(value: str) -> str:
+    return f"sha-256=:{base64.b64encode(bytes.fromhex(value)).decode('ascii')}:"
+
+
+def _parse_content_length(value: str | None) -> int:
+    if value is None or not re.fullmatch(r"0|[1-9][0-9]*", value):
+        raise SandboxIntegrityError("sandbox platform returned invalid Content-Length", code="INVALID_STREAMING_RESPONSE")
+    size = int(value)
+    if size > _MAX_FILE_TRANSFER_BYTES:
+        raise SandboxTransferTooLargeError("file transfer exceeds the 64 MiB limit", code="TRANSFER_TOO_LARGE")
+    return size
+
+
+def _parse_content_digest(value: str | None) -> str:
+    match = _CONTENT_DIGEST.fullmatch(value or "")
+    if match is None:
+        raise SandboxIntegrityError("sandbox platform returned invalid Content-Digest", code="INVALID_CONTENT_DIGEST")
+    try:
+        decoded = base64.b64decode(match.group(1), validate=True)
+    except ValueError as error:
+        raise SandboxIntegrityError("sandbox platform returned invalid Content-Digest", code="INVALID_CONTENT_DIGEST") from error
+    if len(decoded) != 32 or base64.b64encode(decoded).decode("ascii") != match.group(1):
+        raise SandboxIntegrityError("sandbox platform returned invalid Content-Digest", code="INVALID_CONTENT_DIGEST")
+    return decoded.hex()
+
+
+def _error_from_response(response: httpx.Response) -> SandboxError:
+    try:
+        payload = _dict(response.json()) if response.content else {}
+        error_payload = _dict(payload.get("error", {}))
+    except (ValueError, SandboxError):
+        error_payload = {}
+    return error_from_response(
+        status=response.status_code,
+        code=_optional_str(error_payload.get("code")),
+        message=_optional_str(error_payload.get("message")) or f"sandbox platform returned HTTP {response.status_code}",
+    )
 
 
 def _dict(value: object) -> dict[str, object]:
