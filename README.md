@@ -18,61 +18,49 @@ The platform provides:
 
 1. temporary Lease rights rather than ownership of Pods, VMs, or Sandboxes,
 2. `(Consumer, Subject)` isolation for every Lease and Workspace operation,
-3. a Kubernetes Agent Sandbox backend with server-side Pool mapping, runtime verification, restart recovery, and release/expiry cleanup,
-4. atomic single-replica quotas per Tenant Scope, Consumer, and Pool.
+3. a production Go control plane backed only by Kubernetes Agent Sandbox,
+4. server-side logical Pool mapping, runtime verification, restart recovery, and release/expiry cleanup,
+5. async-first Python SDK, zero-runtime-dependency TypeScript SDK, and local pi tools,
+6. reproducible Colima+k3s+gVisor deployment plus a production Helm chart.
 
-The local process backend remains available for trusted contract development only. **It does not isolate untrusted code.**
+Exactly one control-plane replica is supported. Admission quota enforcement and distributed acquisition coordination are not implemented yet.
 
 ## Packages
 
+- `packages/sdk-python`: reference async-first Python SDK
+- `@geminixiang/sandbox-sdk`: zero-runtime-dependency TypeScript HTTP SDK
 - `@geminixiang/sandbox-contracts`: `/v1` protocol constants and types
-- `@geminixiang/sandbox-sdk`: 3 KiB, zero-runtime-dependency HTTP SDK
-- `@geminixiang/sandbox-control-plane`: private HTTP server
+- `apps/control-plane-go`: production Kubernetes-only Go control plane
+- `.pi/extensions/agent-sandbox`: project-local pi tools
 
-## Quick start
+## Local quick start
 
-Start the control plane with server-side Consumer secrets:
+The local Golden Path creates a Colima+k3s cluster, installs pinned Agent Sandbox prerequisites and gVisor, starts the Go control plane, and launches pi:
 
 ```bash
-npm install
-SANDBOX_CONSUMER_SECRETS='{"mikan-dev":"dev-secret"}' npm start
+./scripts/local/pi-up.sh
 ```
 
-Use the SDK from another process:
-
-```js
-import { SandboxPlatformClient } from "@geminixiang/sandbox-sdk";
-
-const client = new SandboxPlatformClient({
-  baseUrl: "http://127.0.0.1:8787",
-  consumerId: "mikan-dev",
-  subjectId: "opaque-user-id",
-  consumerSecret: "dev-secret",
-});
-
-const { lease } = await client.acquire(
-  { pool: "local", ttlSeconds: 900 },
-  { idempotencyKey: crypto.randomUUID() },
-);
-await lease.exec("printf hello");
-await lease.release();
-```
+See [`deploy/colima/README.md`](deploy/colima/README.md) for lifecycle and browser smoke tests. For production, see [`deploy/helm/README.md`](deploy/helm/README.md).
 
 ## Kubernetes backend
 
 See [`docs/kubernetes-backend.md`](docs/kubernetes-backend.md) for requirements, configuration, lifecycle, and the Colima integration test.
 
-The current quota lock is process-local; Kubernetes mode must run as a single control-plane replica until distributed acquisition locking is implemented.
+The chart hard-enforces one replica until distributed acquisition and quota coordination are implemented.
 
 ## Verify
 
 ```bash
 npm test
 npm run test:package
+go test ./...
+./scripts/check-helm.sh
+(cd packages/sdk-python && uv run pytest && uv run pyright)
 ```
 
 The test suite includes cross-Subject and cross-Consumer access attempts for inspect, exec, files, release, delete, and idempotency replay.
 
 ## Next milestone
 
-Review the single-cluster implementation under real mikan workloads before choosing the next capability. Billing, Channels, Restore, and multi-cluster placement remain intentionally out of scope.
+Publish multi-architecture container images, validate the Helm chart on GKE with a gVisor Pool, then run real browser-heavy Python workloads. Billing, Channels, Restore, direct Firecracker management, and multi-cluster placement remain intentionally out of scope.

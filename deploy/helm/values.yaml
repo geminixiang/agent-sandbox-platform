@@ -2,6 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/geminixiang/agent-sandbox-control-plane
+  # Published by .github/workflows/images.yml. Override until the first tagged image is available.
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
