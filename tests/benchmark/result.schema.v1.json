@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/geminixiang/agent-sandbox-platform/tests/benchmark/result.schema.v1.json",
+  "title": "Agent Sandbox benchmark result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "metadata", "series"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "metadata": { "type": "object" },
+    "series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["spec", "samples", "summary"],
+        "properties": {
+          "spec": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scenario", "pool", "cache_state", "samples", "warmups", "unit"],
+            "properties": {
+              "scenario": { "type": "string", "minLength": 1 },
+              "pool": { "type": "string", "minLength": 1 },
+              "cache_state": { "enum": ["warm", "image-cached", "image-uncached", "new-node"] },
+              "samples": { "type": "integer", "minimum": 1 },
+              "warmups": { "type": "integer", "minimum": 0 },
+              "unit": { "const": "milliseconds" }
+            }
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["duration_ms", "success", "error_type"],
+              "properties": {
+                "duration_ms": { "type": "number", "minimum": 0 },
+                "success": { "type": "boolean" },
+                "error_type": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["count", "successes", "failures", "error_rate", "minimum", "maximum", "p50", "p90", "p95", "p99"],
+            "properties": {
+              "count": { "type": "integer", "minimum": 0 },
+              "successes": { "type": "integer", "minimum": 0 },
+              "failures": { "type": "integer", "minimum": 0 },
+              "error_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+              "minimum": { "type": ["number", "null"] },
+              "maximum": { "type": ["number", "null"] },
+              "p50": { "type": ["number", "null"] },
+              "p90": { "type": ["number", "null"] },
+              "p95": { "type": ["number", "null"] },
+              "p99": { "type": ["number", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}
