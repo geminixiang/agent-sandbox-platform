@@ -67,6 +67,21 @@ Build the pinned Chromium/Playwright image inside Colima and run a real browser 
 
 This test claims a browser Sandbox from its WarmPool, verifies the backing Pod uses `RuntimeClass: gvisor`, launches Chromium as a non-root user with its own sandbox enabled, clicks an element through Playwright, and saves a screenshot to the persistent workspace.
 
+## Pi extension environment
+
+Start the complete environment used by the project-local pi extension:
+
+```bash
+./scripts/local/pi-up.sh
+pi
+```
+
+This adds the browser Pool and starts the Go control plane. Local credentials are generated automatically in a gitignored mode-`0600` file; no token export is required. Stop it with:
+
+```bash
+./scripts/local/pi-down.sh
+```
+
 ## Cleanup
 
 Remove Platform and Agent Sandbox cluster resources but retain the Colima VM:

@@ -99,7 +99,17 @@ kubectl --context "${context}" apply --server-side --force-conflicts -f "${manif
 kubectl --context "${context}" -n agent-sandbox-system rollout status deployment/agent-sandbox-controller --timeout=180s
 
 kubectl --context "${context}" apply -f "${REPO_ROOT}/deploy/colima/e2e.yaml"
-kubectl --context "${context}" -n "${PLATFORM_NAMESPACE}" wait --for=condition=Ready sandboxwarmpool/platform-gvisor --timeout=180s 2>/dev/null || true
+echo "Waiting for the coding WarmPool..."
+for _ in $(seq 1 120); do
+  ready_replicas="$(kubectl --context "${context}" -n "${PLATFORM_NAMESPACE}" get sandboxwarmpool platform-gvisor -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+  [[ "${ready_replicas}" == "1" ]] && break
+  sleep 1
+done
+if [[ "${ready_replicas:-}" != "1" ]]; then
+  kubectl --context "${context}" -n "${PLATFORM_NAMESPACE}" get sandboxwarmpool,sandbox,pod >&2
+  echo "ERROR: coding WarmPool did not become ready" >&2
+  exit 1
+fi
 
 cat <<EOF
 Local platform prerequisites are ready.

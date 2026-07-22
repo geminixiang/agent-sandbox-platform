@@ -4,10 +4,23 @@ Project-local pi tools for exercising the Agent Sandbox Platform. The extension 
 
 ## Required environment
 
-Start the local platform environment and a Go control plane, then export:
+Start the complete local pi environment with one command:
 
 ```bash
-export SANDBOX_PLATFORM_URL=http://127.0.0.1:8787
+./scripts/local/pi-up.sh
+pi
+```
+
+No manual token export is required. `pi-up.sh` writes development-only credentials to the gitignored, mode-`0600` `.sandbox-platform/local.json`; the extension signs a fresh five-minute Subject token for each request. Stop the local control plane and remove credentials with:
+
+```bash
+./scripts/local/pi-down.sh
+```
+
+For an external control plane, export:
+
+```bash
+export SANDBOX_PLATFORM_URL=https://sandbox.example.com
 export SANDBOX_PLATFORM_TOKEN='short-lived signed Subject token'
 ```
 

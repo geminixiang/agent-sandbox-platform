@@ -1,3 +1,19 @@
+import { createHmac } from "node:crypto";
+
+export interface LocalCredentials {
+  baseUrl: string;
+  consumerId: string;
+  subjectId: string;
+  consumerSecret: string;
+}
+
+export function createSubjectToken(credentials: LocalCredentials, expiresAt = Math.floor(Date.now() / 1000) + 300): string {
+  const payload = Buffer.from(JSON.stringify({ consumerId: credentials.consumerId, subjectId: credentials.subjectId, exp: expiresAt })).toString("base64url");
+  const signed = `v1.${payload}`;
+  const signature = createHmac("sha256", credentials.consumerSecret).update(signed).digest("base64url");
+  return `${signed}.${signature}`;
+}
+
 export interface SandboxRecord {
   id: string;
   pool: string;

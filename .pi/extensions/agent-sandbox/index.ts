@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { PlatformClient, redact, resolveSecretEnvironment, type SandboxRecord } from "./client.js";
+import { createSubjectToken, PlatformClient, redact, resolveSecretEnvironment, type LocalCredentials, type SandboxRecord } from "./client.js";
 
 const sandboxId = Type.Optional(Type.String({ description: "Sandbox ID; defaults to this pi session's current sandbox" }));
 const secretMapping = Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Map sandbox variable names to host environment variable names. Secret values must never be passed directly." }));
@@ -8,11 +10,13 @@ const secretMapping = Type.Optional(Type.Record(Type.String(), Type.String(), { 
 export default function agentSandboxExtension(pi: ExtensionAPI) {
   let current: SandboxRecord | undefined;
   const owned = new Set<string>();
-  const baseUrl = new URL(process.env.SANDBOX_PLATFORM_URL ?? "http://127.0.0.1:8787/");
+  const localCredentials = loadLocalCredentials(process.cwd());
+  const baseUrl = new URL(process.env.SANDBOX_PLATFORM_URL ?? localCredentials?.baseUrl ?? "http://127.0.0.1:8787/");
   const client = new PlatformClient(baseUrl, () => {
     const token = process.env.SANDBOX_PLATFORM_TOKEN;
-    if (!token) throw new Error("SANDBOX_PLATFORM_TOKEN is required");
-    return token;
+    if (token) return token;
+    if (localCredentials) return createSubjectToken(localCredentials);
+    throw new Error("Run ./scripts/local/pi-up.sh before starting pi, or set SANDBOX_PLATFORM_TOKEN");
   });
   const resolveId = (id?: string) => id ?? current?.id ?? (() => { throw new Error("No current sandbox; call sandbox_create first") })();
   const text = (value: unknown, secrets: string[] = []) => ({ content: [{ type: "text" as const, text: redact(typeof value === "string" ? value : JSON.stringify(value, null, 2), secrets) }], details: {} });
@@ -79,4 +83,14 @@ export default function agentSandboxExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => { ctx.ui.setStatus("agent-sandbox", ctx.ui.theme.fg("accent", `Sandbox: ${baseUrl.host}`)); });
   pi.on("session_shutdown", async () => { for (const id of owned) await client.release(id).catch(() => client.delete(id).catch(() => undefined)); owned.clear(); });
+}
+
+function loadLocalCredentials(cwd: string): LocalCredentials | undefined {
+  try {
+    const value = JSON.parse(readFileSync(join(cwd, ".sandbox-platform", "local.json"), "utf8")) as Partial<LocalCredentials>;
+    if (typeof value.baseUrl !== "string" || typeof value.consumerId !== "string" || typeof value.subjectId !== "string" || typeof value.consumerSecret !== "string") return undefined;
+    return value as LocalCredentials;
+  } catch {
+    return undefined;
+  }
 }
