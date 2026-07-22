@@ -17,12 +17,15 @@ import (
 )
 
 type fakeResources struct {
-	claims  map[string]*unstructured.Unstructured
-	deleted []string
+	claims           map[string]*unstructured.Unstructured
+	deleted          []string
+	listError        error
+	warmPoolGetError error
+	warmPoolReady    int64
 }
 
 func newFakeResources() *fakeResources {
-	return &fakeResources{claims: make(map[string]*unstructured.Unstructured)}
+	return &fakeResources{claims: make(map[string]*unstructured.Unstructured), warmPoolReady: 1}
 }
 func (f *fakeResources) Create(_ context.Context, _ schema.GroupVersionResource, _ string, value *unstructured.Unstructured, _ metav1.CreateOptions) (*unstructured.Unstructured, error) {
 	copy := value.DeepCopy()
@@ -33,7 +36,10 @@ func (f *fakeResources) Create(_ context.Context, _ schema.GroupVersionResource,
 }
 func (f *fakeResources) Get(_ context.Context, resource schema.GroupVersionResource, _ string, name string, _ metav1.GetOptions) (*unstructured.Unstructured, error) {
 	if resource == warmPoolResource {
-		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}, "status": map[string]any{"readyReplicas": int64(1)}}}, nil
+		if f.warmPoolGetError != nil {
+			return nil, f.warmPoolGetError
+		}
+		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}, "status": map[string]any{"readyReplicas": f.warmPoolReady}}}, nil
 	}
 	if resource == sandboxResource {
 		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name, "annotations": map[string]any{"agents.x-k8s.io/pod-name": name}}, "status": map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}, nil
@@ -45,6 +51,9 @@ func (f *fakeResources) Get(_ context.Context, resource schema.GroupVersionResou
 	return value.DeepCopy(), nil
 }
 func (f *fakeResources) List(_ context.Context, _ schema.GroupVersionResource, _ string, options metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	if f.listError != nil {
+		return nil, f.listError
+	}
 	result := &unstructured.UnstructuredList{}
 	for _, value := range f.claims {
 		matches := true
@@ -88,9 +97,26 @@ func fixture(t *testing.T, runtimeClass string) (*Backend, *fakeResources) {
 }
 
 func TestReadyRequiresEveryConfiguredWarmPool(t *testing.T) {
-	backend, _ := fixture(t, "gvisor")
+	backend, resources := fixture(t, "gvisor")
 	if err := backend.Ready(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+
+	resources.warmPoolReady = 0
+	if err := backend.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "has no ready replicas") {
+		t.Fatalf("zero-capacity readiness error = %v", err)
+	}
+
+	resources.warmPoolReady = 1
+	resources.listError = apierrors.NewServiceUnavailable("API unavailable")
+	if err := backend.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "list SandboxClaims") {
+		t.Fatalf("API readiness error = %v", err)
+	}
+
+	resources.listError = nil
+	resources.warmPoolGetError = apierrors.NewForbidden(warmPoolResource.GroupResource(), "gvisor-pool", nil)
+	if err := backend.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "get WarmPool") {
+		t.Fatalf("WarmPool readiness error = %v", err)
 	}
 }
 
