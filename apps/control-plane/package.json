@@ -8,7 +8,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@geminixiang/sandbox-contracts": "0.1.0"
+    "@geminixiang/sandbox-contracts": "0.1.0",
+    "@kubernetes/client-node": "^1.4.0"
   },
   "engines": {
     "node": ">=22.19.0"

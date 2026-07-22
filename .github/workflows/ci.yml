@@ -19,6 +19,11 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run test:package
+      - run: go test ./...

@@ -87,6 +87,12 @@ test("release and expiry are terminal, and paths cannot escape the workspace", a
   );
   const released = await backend.release(scopeA, lease.id);
   assert.equal(released.status, "released");
+  const replacement = await backend.acquire(scopeA, {
+    pool: "local",
+    idempotencyKey: "request-1",
+    ttlSeconds: 60,
+  });
+  assert.notEqual(replacement.lease.id, lease.id);
   await assert.rejects(
     backend.exec(scopeA, lease.id, { command: "true" }),
     (error) => error.code === "LEASE_NOT_ACTIVE",
@@ -103,6 +109,12 @@ test("release and expiry are terminal, and paths cannot escape the workspace", a
     backend.exec(scopeA, expiring.lease.id, { command: "true" }),
     (error) => error.code === "LEASE_NOT_ACTIVE",
   );
+  const afterExpiry = await backend.acquire(scopeA, {
+    pool: "local",
+    idempotencyKey: "request-2",
+    ttlSeconds: 60,
+  });
+  assert.notEqual(afterExpiry.lease.id, expiring.lease.id);
 });
 
 test("rejects lease durations outside platform policy", async (t) => {

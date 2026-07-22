@@ -14,12 +14,14 @@ Mikan is the initial Primary Design Partner, not the only intended Consumer.
 
 ## Current phase
 
-Phase 0 proves the two core invariants:
+The platform provides:
 
-1. Consumers receive temporary Leases, not ownership of Pods, VMs, or Sandboxes.
-2. Every Lease and Workspace operation is isolated by `(Consumer, Subject)`, even when a Consumer routing bug supplies another Subject's Lease ID.
+1. temporary Lease rights rather than ownership of Pods, VMs, or Sandboxes,
+2. `(Consumer, Subject)` isolation for every Lease and Workspace operation,
+3. a Kubernetes Agent Sandbox backend with server-side Pool mapping, runtime verification, restart recovery, and release/expiry cleanup,
+4. atomic single-replica quotas per Tenant Scope, Consumer, and Pool.
 
-The local process backend is for development and contract tests only. **It does not isolate untrusted code.** Kubernetes Agent Sandbox support will be added behind the same backend interface later.
+The local process backend remains available for trusted contract development only. **It does not isolate untrusted code.**
 
 ## Packages
 
@@ -56,6 +58,12 @@ await lease.exec("printf hello");
 await lease.release();
 ```
 
+## Kubernetes backend
+
+See [`docs/kubernetes-backend.md`](docs/kubernetes-backend.md) for requirements, configuration, lifecycle, and the Colima integration test.
+
+The current quota lock is process-local; Kubernetes mode must run as a single control-plane replica until distributed acquisition locking is implemented.
+
 ## Verify
 
 ```bash
@@ -67,4 +75,4 @@ The test suite includes cross-Subject and cross-Consumer access attempts for ins
 
 ## Next milestone
 
-Add a Kubernetes Agent Sandbox backend inside the control plane without changing the Lease or Tenant Scope interface.
+Review the single-cluster implementation under real mikan workloads before choosing the next capability. Billing, Channels, Restore, and multi-cluster placement remain intentionally out of scope.

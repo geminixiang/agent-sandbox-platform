@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { createMetadataIdentity } from "./metadata-identity.js";
 
 const RUNTIME_WORKSPACE = "/workspace";
 
@@ -12,6 +13,7 @@ export class ProcessLeaseBackend {
     this.now = options.now ?? Date.now;
     this.defaultTtlSeconds = options.defaultTtlSeconds ?? 900;
     this.maxTtlSeconds = options.maxTtlSeconds ?? 3600;
+    this.identity = createMetadataIdentity(options.metadataSecret ?? "process-development-only");
     this.leases = new Map();
     this.leaseByIdempotencyKey = new Map();
   }
@@ -29,7 +31,11 @@ export class ProcessLeaseBackend {
     const existing = existingId && this.leases.get(existingId);
     if (existing) {
       this.updateExpiration(existing);
-      return { lease: publicRecord(existing.record), replayed: true };
+      if (existing.record.status === "expired") {
+        await this.deleteLease(existingId, existing);
+      } else {
+        return { lease: publicRecord(existing.record), replayed: true };
+      }
     }
 
     const workspaceDir = await mkdtemp(join(this.rootDir ?? tmpdir(), "sandbox-platform-"));
@@ -43,9 +49,53 @@ export class ProcessLeaseBackend {
       expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
       lastUsedAt: timestamp,
     };
-    this.leases.set(record.id, { record, scope: { ...scope }, workspaceDir, mappingKey });
+    const scopeHash = this.scopeHash(scope);
+    const consumerHash = this.consumerHash(scope);
+    this.leases.set(record.id, {
+      record,
+      scope: { ...scope },
+      scopeHash,
+      consumerHash,
+      workspaceDir,
+      mappingKey,
+    });
     this.leaseByIdempotencyKey.set(mappingKey, record.id);
     return { lease: publicRecord(record), replayed: false };
+  }
+
+  async findByIdempotencyKey(scope, idempotencyKey) {
+    const leaseId = this.leaseByIdempotencyKey.get(scopeKey(scope, idempotencyKey));
+    const lease = leaseId && this.leases.get(leaseId);
+    if (!lease) return undefined;
+    this.updateExpiration(lease);
+    if (lease.record.status === "expired") {
+      await this.deleteLease(leaseId, lease);
+      return undefined;
+    }
+    return publicRecord(lease.record);
+  }
+
+  listActiveLeases() {
+    const active = [];
+    for (const lease of this.leases.values()) {
+      this.updateExpiration(lease);
+      if (lease.record.status === "active") {
+        active.push({
+          record: publicRecord(lease.record),
+          scopeHash: lease.scopeHash,
+          consumerHash: lease.consumerHash,
+        });
+      }
+    }
+    return active;
+  }
+
+  scopeHash(scope) {
+    return this.identity.scopeHash(scope);
+  }
+
+  consumerHash(scope) {
+    return this.identity.consumerHash(scope);
   }
 
   get(scope, id) {
@@ -93,6 +143,9 @@ export class ProcessLeaseBackend {
     const lease = this.requireActiveLease(scope, id);
     lease.record.status = "released";
     this.touch(lease);
+    if (this.leaseByIdempotencyKey.get(lease.mappingKey) === id) {
+      this.leaseByIdempotencyKey.delete(lease.mappingKey);
+    }
     return publicRecord(lease.record);
   }
 

@@ -11,7 +11,8 @@
   "scripts": {
     "start": "npm run start --workspace=@geminixiang/sandbox-control-plane",
     "test": "npm test --workspaces --if-present",
-    "test:package": "node scripts/check-sdk-package.mjs"
+    "test:package": "node scripts/check-sdk-package.mjs",
+    "test:e2e:kubernetes": "node tests/e2e/kubernetes-agent-sandbox.mjs"
   },
   "engines": {
     "node": ">=22.19.0"
