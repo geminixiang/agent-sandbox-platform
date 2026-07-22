@@ -2,6 +2,21 @@
 
 This directory contains operator overrides for installing the platform on an existing GKE cluster. It does not create or mutate a cluster.
 
+## Dedicated test cluster
+
+The reproducible Standard cluster profile uses exactly three `e2-standard-2` workers: one regular system node and two gVisor sandbox nodes. Creation is idempotent and hard-pinned to the dedicated project/zone/name:
+
+```bash
+./scripts/gke/cluster-up.sh
+```
+
+Deletion requires an exact confirmation string and refuses any other target:
+
+```bash
+SANDBOX_GKE_DELETE_CONFIRM='delete glab-384109/asia-east1-b/agent-sandbox-e2e' \
+  ./scripts/gke/cluster-down.sh
+```
+
 ## Supported baseline
 
 - GKE Standard with a COS_CONTAINERD node pool created with `--sandbox type=gvisor`; or
