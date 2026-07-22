@@ -71,6 +71,16 @@ Build the pinned Chromium/Playwright image inside Colima and run a real browser 
 
 This test claims a browser Sandbox from its WarmPool, verifies the backing Pod uses `RuntimeClass: gvisor`, launches Chromium as a non-root user with its own sandbox enabled, clicks an element through Playwright, and saves a screenshot to the persistent workspace.
 
+## Python wheel browser test
+
+Build the Python SDK wheel, install it into a clean virtual environment, and drive the same real browser path through the Go control plane:
+
+```bash
+./scripts/local/python-browser-smoke.sh
+```
+
+This verifies the release artifact—not the source checkout—can create a browser Sandbox, write a Playwright module, navigate to a public page, read a screenshot as bytes, and release the Lease.
+
 ## Pi extension environment
 
 Start the complete environment used by the project-local pi extension:
