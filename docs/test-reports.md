@@ -20,6 +20,7 @@ Never record credentials, tokens, Secret values, or private workload data. Updat
 
 | Issue | Environment | Result | Summary | Related work |
 | --- | --- | --- | --- | --- |
+| [#3 — Colima gVisor workload benchmark baseline report](https://github.com/geminixiang/agent-sandbox-platform/issues/3) | One-node arm64 Colima+k3s, Agent Sandbox v0.5.2, gVisor coding/browser Pools | Pass; 22 series and zero failed samples | Warm acquire, replenishment, bounded concurrency, exec/output, file I/O, and Chromium milestones | [#1 — benchmark roadmap](https://github.com/geminixiang/agent-sandbox-platform/issues/1), [#4 — streaming file transfers](https://github.com/geminixiang/agent-sandbox-platform/issues/4) |
 | [#2 — GKE gVisor daily-work acceptance test report](https://github.com/geminixiang/agent-sandbox-platform/issues/2) | Dedicated three-node GKE Standard cluster, Agent Sandbox v0.5.2, gVisor coding/browser Pools | Pass; cluster and local credentials removed | Built-wheel Python coding, crawler, Git/HTTPS, Playwright, isolation, timeout, readiness, policy restoration, and lifecycle cleanup | [#1 — reproducible performance benchmarks](https://github.com/geminixiang/agent-sandbox-platform/issues/1) |
 
 ## Benchmark tracking
