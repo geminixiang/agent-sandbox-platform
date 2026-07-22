@@ -33,6 +33,11 @@ list_claims() {
 }
 
 cleanup() {
+  status=$?
+  if [[ ${status} -ne 0 && -f "${log}" ]]; then
+    echo "--- control-plane log ---" >&2
+    cat "${log}" >&2
+  fi
   if [[ -n "${pid}" ]]; then
     kill "${pid}" 2>/dev/null || true
     wait "${pid}" 2>/dev/null || true
@@ -41,6 +46,7 @@ cleanup() {
     -l "sandbox.geminixiang.dev/consumer=${consumer_hash}" --ignore-not-found --wait=true \
     >/dev/null 2>&1 || true
   rm -rf "${temp_dir}"
+  return "${status}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT

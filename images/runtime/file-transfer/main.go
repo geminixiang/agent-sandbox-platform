@@ -110,7 +110,9 @@ func download(path string, destination io.Writer) error {
 	}
 	defer func() {
 		_ = temporary.Close()
-		_ = unix.Unlinkat(parent, temporaryName, 0)
+		if temporaryName != "" {
+			_ = unix.Unlinkat(parent, temporaryName, 0)
+		}
 	}()
 	digest := sha256.New()
 	written, err := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(source, maxBytes+1))
@@ -123,6 +125,10 @@ func download(path string, destination io.Writer) error {
 	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
 		return protocolError("TRANSFER_FAILED")
 	}
+	if err := unix.Unlinkat(parent, temporaryName, 0); err != nil {
+		return protocolError("TRANSFER_FAILED")
+	}
+	temporaryName = ""
 	if _, err := fmt.Fprintf(destination, "ASP1 OK %d %x\n", written, digest.Sum(nil)); err != nil {
 		return postflightError{err}
 	}

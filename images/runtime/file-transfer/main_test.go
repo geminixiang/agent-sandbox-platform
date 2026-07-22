@@ -43,6 +43,43 @@ func TestDownloadSnapshotsRegularFileBeforeSuccessMarker(t *testing.T) {
 	}
 }
 
+func TestDownloadUnlinksSnapshotBeforeStreamingBody(t *testing.T) {
+	root := withWorkspace(t)
+	path := filepath.Join(root, "file.bin")
+	if err := os.WriteFile(path, []byte("stream body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan struct{})
+	started := make(chan struct{})
+	destination := &blockingWriter{started: started, blocked: blocked}
+	done := make(chan error, 1)
+	go func() { done <- download(path, destination) }()
+	<-started
+	matches, err := filepath.Glob(filepath.Join(root, ".asp-download-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("visible snapshot during streaming = %v, %v", matches, err)
+	}
+	close(blocked)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type blockingWriter struct {
+	started chan struct{}
+	blocked chan struct{}
+	once    bool
+}
+
+func (w *blockingWriter) Write(value []byte) (int, error) {
+	if !w.once && !bytes.HasPrefix(value, []byte("ASP1 OK ")) {
+		w.once = true
+		close(w.started)
+		<-w.blocked
+	}
+	return len(value), nil
+}
+
 func TestUploadValidatesBeforeAtomicReplacement(t *testing.T) {
 	root := withWorkspace(t)
 	path := filepath.Join(root, "nested", "file.bin")
