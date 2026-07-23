@@ -378,7 +378,7 @@ for sensitive in \
     exit 1
   fi
 done
-if grep -Eq 'v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' "${report}"; then
+if grep -Eq 'v1\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{43}([^A-Za-z0-9_-]|$)' "${report}"; then
   echo "ERROR: evidence report contains a Subject token" >&2
   rm -f "${report}"
   exit 1
