@@ -71,6 +71,20 @@ Build the pinned Chromium/Playwright image inside Colima and run a real browser 
 
 This test claims a browser Sandbox from its WarmPool, verifies the backing Pod uses `RuntimeClass: gvisor`, launches Chromium as a non-root user with its own sandbox enabled, clicks an element through Playwright, and saves a screenshot to the persistent workspace.
 
+## Built-package TypeScript SDK acceptance
+
+With the existing Colima profile running, validate the release-candidate npm tarball through the real Go control plane, coding Pool, browser Pool, Agent Sandbox, and gVisor path:
+
+```bash
+./scripts/local/typescript-sdk-smoke.sh
+```
+
+The script builds the current coding and browser images, applies deployment manifests and recycles a WarmPool only when convergence or image provenance requires it, then packs exactly `@geminixiang/sandbox-sdk@0.2.0-rc.1`. It installs that tarball into a clean temporary npm project with package-lock generation disabled and runs the copied E2E fixture from the temporary working directory using a bare package import.
+
+The fixture exercises rotating async Subject-token credentials, `create` and callback cleanup, text/canonical binary helpers, 10 MiB bounded streaming in both Pools with incremental SHA-256, successful and checked failing commands, discovery/connect and persistent Workspaces, typed unknown-Pool and timeout errors, immutable snapshots, a real headless Chromium launch, release cleanup, and cross-Subject isolation. It intentionally excludes routers and background command/session features.
+
+Consumer and metadata secrets remain in the trusted parent shell. The clean-installed consumer receives only two rotating owner Subject tokens, one second-Subject token, and the temporary Platform URL. The script never creates, stops, or deletes Colima, does not use cloud resources, and limits cleanup to its control-plane process, temporary files, and Claims carrying its own hashed consumer identity. It verifies pre/post Claim equality, recovered WarmPools, gVisor runtime class, and built image IDs, then writes a token/secret-scanned JSON report under `.sandbox-platform/test-reports/`.
+
 ## Python wheel browser test
 
 Build the Python SDK wheel, install it into a clean virtual environment, and drive the same real browser path through the Go control plane:

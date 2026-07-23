@@ -61,6 +61,18 @@ for await (const sandbox of client.list({ pool: "coding", limit: 50 })) {
 
 Pages, page arrays, Lease records, and command results are defensive frozen snapshots. `nextCursor` is opaque and `null` on the final page. Empty intermediate pages are valid. Discovery is not recency ordered, and a concurrently released Sandbox can still fail `connect()` with `SandboxNotFoundError`.
 
+## Trial artifact validation
+
+Before a trial release, validate the packed artifact—not this source directory—against the existing Colima/k3s/gVisor environment:
+
+```bash
+./scripts/local/typescript-sdk-smoke.sh
+```
+
+The acceptance packs exactly `0.2.0-rc.1`, installs the tarball in a clean temporary npm project with package-lock generation disabled, and runs a bare `@geminixiang/sandbox-sdk` import against real coding and browser Pools. It covers rotating async credentials, callback cleanup, command and file helpers, 10 MiB bounded streaming with incremental SHA-256, discovery and Workspace persistence, typed failures, immutable snapshots, release cleanup, and two-Subject isolation.
+
+The consumer process receives only short-lived Subject tokens and the temporary Platform URL; Consumer and metadata secrets remain in the trusted parent process. The script leaves the Colima profile running, compares pre/post Claims, verifies WarmPool image provenance, and writes secret-scanned evidence to the gitignored `.sandbox-platform/test-reports/` directory. It does not exercise browser clients, routers, background command sessions, or cloud deployment.
+
 ## Migration and compatibility
 
 | 0.1 API | 0.2 facade | Status |
