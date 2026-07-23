@@ -157,6 +157,12 @@ func (b *Backend) OpenFile(ctx context.Context, scope lease.Scope, id, requested
 	}()
 
 	marker, markerErr := readTransferMarker(stdoutReader)
+	if markerErr == nil && marker.code != "" {
+		op.cancel()
+		_ = stdoutReader.Close()
+		<-op.done
+		return lease.FileDownload{}, remoteTransferError(marker.code)
+	}
 	if op.ctx.Err() != nil {
 		op.cancel()
 		_ = stdoutReader.Close()
@@ -168,12 +174,6 @@ func (b *Backend) OpenFile(ctx context.Context, scope lease.Scope, id, requested
 		_ = stdoutReader.Close()
 		<-op.done
 		return lease.FileDownload{}, normalizeTransferError(markerErr)
-	}
-	if marker.code != "" {
-		op.cancel()
-		_ = stdoutReader.Close()
-		<-op.done
-		return lease.FileDownload{}, remoteTransferError(marker.code)
 	}
 	if marker.size < 0 || marker.size > lease.MaxFileTransferBytes {
 		op.cancel()
