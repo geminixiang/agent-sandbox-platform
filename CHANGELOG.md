@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add the standard-library-only Go SDK `v0.2.0-rc.1` with rotating credentials, lifecycle, checked commands, discovery, typed errors, and bounded file streaming.
 - Add the TypeScript SDK `0.2.0-rc.1` Python-parity facade with rotating Subject-token credentials, callback and async-disposal lifecycle helpers, immutable command/page/record models, typed errors, byte/file helpers, and full `0.1` compatibility aliases.
 - Add installed-tarball TypeScript consumer compilation and strict package content/export verification to the SDK release gate.
 - Add an expiring `/v1/leases` HTTP contract and zero-runtime-dependency TypeScript SDK.

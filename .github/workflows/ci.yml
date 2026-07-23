@@ -31,6 +31,13 @@ jobs:
       - run: npm test
       - run: npm run test:package
       - run: go test ./...
+      - name: Verify Go SDK
+        run: |
+          cd packages/sdk-go
+          go test -race ./...
+          go vet ./...
+          cd ../..
+          ./scripts/check-go-sdk-module.sh
       - name: Verify benchmark harness
         env:
           PYTHONPATH: packages/sdk-python/src
