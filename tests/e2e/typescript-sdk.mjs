@@ -18,6 +18,17 @@ function required(name) {
   return value;
 }
 
+async function waitForPlatformReady() {
+  const url = new URL("/ready", required("SANDBOX_PLATFORM_URL"));
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("platform did not restore full WarmPool readiness");
+}
+
 function payloadChunk(size) {
   const chunk = Buffer.allocUnsafe(size);
   for (let offset = 0; offset < size; offset += PAYLOAD_BLOCK.length) {
@@ -258,6 +269,7 @@ async function main() {
       },
     );
     await assertNotVisible(owner, callbackID);
+    await waitForPlatformReady();
 
     const isolationOwner = await owner.create({
       pool: "coding",
@@ -285,6 +297,7 @@ async function main() {
         const otherReleasedRecord = await isolationOther.release();
         otherReleased = true;
         assert.equal(otherReleasedRecord.status, "released");
+        await waitForPlatformReady();
       } finally {
         if (!otherReleased) await isolationOther.close();
       }
