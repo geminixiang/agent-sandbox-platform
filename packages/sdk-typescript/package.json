@@ -1,6 +1,6 @@
 {
   "name": "@geminixiang/sandbox-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0-rc.1",
   "description": "Lightweight HTTP SDK for Agent Sandbox Platform",
   "license": "MIT",
   "type": "module",
@@ -14,9 +14,13 @@
     }
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/*.test.js && npm run test:types",
+    "test:types": "tsc -p test/types/tsconfig.json"
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

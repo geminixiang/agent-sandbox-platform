@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add the TypeScript SDK `0.2.0-rc.1` Python-parity facade with rotating Subject-token credentials, callback and async-disposal lifecycle helpers, immutable command/page/record models, typed errors, byte/file helpers, and full `0.1` compatibility aliases.
+- Add installed-tarball TypeScript consumer compilation and strict package content/export verification to the SDK release gate.
 - Add an expiring `/v1/leases` HTTP contract and zero-runtime-dependency TypeScript SDK.
 - Add short-lived HMAC Subject tokens that derive Tenant Scope from verified `(Consumer, Subject)` claims.
 - Add a local process Lease backend for trusted contract development only.

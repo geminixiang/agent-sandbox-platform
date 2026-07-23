@@ -8,6 +8,7 @@ import {
   SandboxPlatformClient,
   SandboxPlatformError,
   SandboxPlatformIntegrityError,
+  SandboxTransferTooLargeError,
   SandboxUnknownPoolError,
 } from "../src/index.js";
 
@@ -199,24 +200,69 @@ test("download truncation and streaming preflight errors are typed", async () =>
     assert.equal(error.code, "TRANSFER_LIMIT_REACHED");
     return true;
   });
+
+  const oversizedClient = clientWithFetch(async (url) => {
+    if (!String(url).includes("/files/content")) return jsonResponse({ lease: record });
+    return new Response(new Uint8Array(), { headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(64 * 1024 * 1024 + 1),
+      "content-digest": contentDigest(sha256),
+    }});
+  });
+  const oversizedLease = await oversizedClient.get("lease_1");
+  await assert.rejects(
+    oversizedLease.readFileStream("/workspace/data.bin"),
+    (error) => error instanceof SandboxTransferTooLargeError && error.code === "TRANSFER_TOO_LARGE",
+  );
 });
 
-test("stream upload maps a transport end to ABORTED", async () => {
-  const client = new SandboxPlatformClient({
-    baseUrl: "https://sandbox.example/",
-    consumerId: "mikan",
-    subjectId: "subject-a",
-    consumerSecret: "secret",
-    fetch: async (url) => {
-      if (String(url).endsWith("/leases/lease_1")) return jsonResponse({ lease: record });
-      throw new TypeError("fetch failed");
-    },
+test("stream upload classifies source, transport, and interrupted-response failures", async () => {
+  const validDigest = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881";
+  const sourceFailure = new Error("source failed");
+  const sourceClient = clientWithFetch(async (url, init) => {
+    if (!String(url).includes("/files/content")) return jsonResponse({ lease: record });
+    for await (const _chunk of init.body) { /* consume */ }
+    return new Response(null, { status: 204 });
   });
-  const lease = await client.get("lease_1");
+  const sourceLease = await sourceClient.get("lease_1");
   await assert.rejects(
-    lease.writeFileStream("/workspace/a", (async function* () { yield new Uint8Array([120]); })(), {
+    sourceLease.writeFileStream("/workspace/a", (async function* () { throw sourceFailure; })(), {
       sizeBytes: 1,
-      sha256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+      sha256: validDigest,
+    }),
+    (error) => error === sourceFailure,
+  );
+  await assert.rejects(
+    sourceLease.writeFileStream("/workspace/a", (async function* () { yield "not bytes"; })(), {
+      sizeBytes: 1,
+      sha256: validDigest,
+    }),
+    (error) => error instanceof TypeError && error.code !== "ABORTED",
+  );
+
+  const transportClient = clientWithFetch(async (url) => {
+    if (String(url).endsWith("/leases/lease_1")) return jsonResponse({ lease: record });
+    throw new TypeError("network down before upload completion");
+  });
+  const transportLease = await transportClient.get("lease_1");
+  await assert.rejects(
+    transportLease.writeFileStream("/workspace/a", (async function* () { yield new Uint8Array([120]); })(), {
+      sizeBytes: 1,
+      sha256: validDigest,
+    }),
+    (error) => error.constructor === SandboxPlatformError && error.code === undefined,
+  );
+
+  const interruptedClient = clientWithFetch(async (url, init) => {
+    if (String(url).endsWith("/leases/lease_1")) return jsonResponse({ lease: record });
+    for await (const _chunk of init.body) { /* consume and validate the full upload */ }
+    throw new TypeError("fetch failed");
+  });
+  const interruptedLease = await interruptedClient.get("lease_1");
+  await assert.rejects(
+    interruptedLease.writeFileStream("/workspace/a", (async function* () { yield new Uint8Array([120]); })(), {
+      sizeBytes: 1,
+      sha256: validDigest,
     }),
     (error) => error instanceof SandboxPlatformError && error.code === "ABORTED",
   );
