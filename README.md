@@ -28,6 +28,7 @@ Exactly one control-plane replica is supported. Admission quota enforcement and 
 ## Packages
 
 - `packages/sdk-python`: reference async-first Python SDK
+- `packages/sdk-go`: standard-library-only Go SDK
 - `@geminixiang/sandbox-sdk`: zero-runtime-dependency TypeScript HTTP SDK
 - `@geminixiang/sandbox-contracts`: `/v1` protocol constants and types
 - `apps/control-plane-go`: production Kubernetes-only Go control plane
@@ -41,7 +42,7 @@ The local Golden Path creates a Colima+k3s cluster, installs pinned Agent Sandbo
 ./scripts/local/pi-up.sh
 ```
 
-See [`deploy/colima/README.md`](deploy/colima/README.md) for lifecycle and browser smoke tests. For production, see [`deploy/helm/README.md`](deploy/helm/README.md).
+See [`deploy/colima/README.md`](deploy/colima/README.md) for lifecycle and browser smoke tests. Mikan's trial starts with [`docs/trial/mikan-quickstart.md`](docs/trial/mikan-quickstart.md). For production, see [`deploy/helm/README.md`](deploy/helm/README.md).
 
 ## Kubernetes backend
 
@@ -55,6 +56,8 @@ The chart hard-enforces one replica until distributed acquisition and quota coor
 npm test
 npm run test:package
 go test ./...
+(cd packages/sdk-go && go test -race ./...)
+./scripts/check-go-sdk-module.sh
 ./scripts/check-helm.sh
 (cd packages/sdk-python && uv run pytest && uv run pyright)
 ```
