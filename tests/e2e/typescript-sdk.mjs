@@ -276,39 +276,28 @@ async function main() {
       ttlSeconds: 300,
       idempotencyKey: `typescript-isolation-owner-${Date.now()}`,
     });
-    let ownerReleased = false;
-    try {
-      await isolationOwner.files.writeText("/workspace/owner-only.txt", "owner");
-      const otherPage = await other.listPage({ pool: "coding", limit: 100 });
-      assert.ok(!otherPage.sandboxes.some(({ id }) => id === isolationOwner.id));
-      await assertNotVisible(other, isolationOwner.id);
-
-      const isolationOther = await other.create({
-        pool: "coding",
-        ttlSeconds: 300,
-        idempotencyKey: `typescript-isolation-other-${Date.now()}`,
-      });
-      let otherReleased = false;
-      try {
-        await isolationOther.files.writeText("/workspace/other-only.txt", "other");
-        const ownerPage = await owner.listPage({ pool: "coding", limit: 100 });
-        assert.ok(!ownerPage.sandboxes.some(({ id }) => id === isolationOther.id));
-        await assertNotVisible(owner, isolationOther.id);
-        const otherReleasedRecord = await isolationOther.release();
-        otherReleased = true;
-        assert.equal(otherReleasedRecord.status, "released");
-        await waitForPlatformReady();
-      } finally {
-        if (!otherReleased) await isolationOther.close();
-      }
-      await assertNotVisible(other, isolationOther.id);
-      const ownerReleasedRecord = await isolationOwner.release();
-      ownerReleased = true;
-      assert.equal(ownerReleasedRecord.status, "released");
-    } finally {
-      if (!ownerReleased) await isolationOwner.close();
-    }
+    await isolationOwner.files.writeText("/workspace/owner-only.txt", "owner");
+    const otherPage = await other.listPage({ pool: "coding", limit: 100 });
+    assert.ok(!otherPage.sandboxes.some(({ id }) => id === isolationOwner.id));
+    await assertNotVisible(other, isolationOwner.id);
+    const ownerReleasedRecord = await isolationOwner.release();
+    assert.equal(ownerReleasedRecord.status, "released");
     await assertNotVisible(owner, isolationOwner.id);
+    await waitForPlatformReady();
+
+    const isolationOther = await other.create({
+      pool: "coding",
+      ttlSeconds: 300,
+      idempotencyKey: `typescript-isolation-other-${Date.now()}`,
+    });
+    await isolationOther.files.writeText("/workspace/other-only.txt", "other");
+    const ownerPage = await owner.listPage({ pool: "coding", limit: 100 });
+    assert.ok(!ownerPage.sandboxes.some(({ id }) => id === isolationOther.id));
+    await assertNotVisible(owner, isolationOther.id);
+    const otherReleasedRecord = await isolationOther.release();
+    assert.equal(otherReleasedRecord.status, "released");
+    await assertNotVisible(other, isolationOther.id);
+    await waitForPlatformReady();
 
     const pools = [];
     for (const pool of ["coding", "browser"]) pools.push(await verifyPool(owner, pool));
