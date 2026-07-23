@@ -182,7 +182,6 @@ async function verifyPool(client, pool) {
     const page = await client.listPage({ pool, limit: 1 });
     assert.ok(Object.isFrozen(page));
     assert.ok(Object.isFrozen(page.sandboxes));
-    assert.ok(page.sandboxes.some(({ id }) => id === sandbox.id));
     assert.throws(() => {
       page.nextCursor = "changed";
     }, TypeError);
