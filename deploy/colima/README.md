@@ -77,6 +77,7 @@ With the existing Colima profile running, validate the release-candidate npm tar
 
 ```bash
 ./scripts/local/typescript-sdk-smoke.sh
+./scripts/local/go-sdk-smoke.sh
 ```
 
 The script builds the current coding and browser images, applies deployment manifests and recycles a WarmPool only when convergence or image provenance requires it, then packs exactly `@geminixiang/sandbox-sdk@0.2.0-rc.1`. It installs that tarball into a clean temporary npm project with package-lock generation disabled and runs the copied E2E fixture from the temporary working directory using a bare package import.
