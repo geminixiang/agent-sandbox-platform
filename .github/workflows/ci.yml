@@ -36,7 +36,9 @@ jobs:
           cd packages/sdk-go
           go test -race ./...
           go vet ./...
-          cd ../..
+          cd ../../tests/e2e/go-sdk
+          go test ./...
+          cd ../../..
           ./scripts/check-go-sdk-module.sh
       - name: Verify benchmark harness
         env:
